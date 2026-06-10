@@ -176,3 +176,22 @@ export interface AllocationResult {
   gap:        string;
   actions:    string[];
 }
+
+// ── Sprint 6 — Community Analysis ────────────────────────────────────────────
+
+export type Sentiment  = "bullish" | "neutral" | "bearish";
+export type Horizon    = "short" | "mid" | "long";
+export type Conviction = "low" | "medium" | "high";
+
+export interface CommunityAnalysis {
+  id:           string;
+  display_name: string;
+  ticker:       string;
+  ticker_name:  string;
+  sentiment:    Sentiment;
+  horizon:      Horizon;
+  conviction:   Conviction;
+  bull_case:    string;
+  risk:         string;
+  created_at:   string;
+}

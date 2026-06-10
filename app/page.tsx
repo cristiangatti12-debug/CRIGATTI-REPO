@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getLang, setLang, type Lang } from "@/lib/i18n";
-import type { NewsItem, TickerSignal, MarketSignalsResponse, MarketStockSignal } from "@/types";
+import type { NewsItem, TickerSignal, MarketSignalsResponse, MarketStockSignal, CommunityAnalysis } from "@/types";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Legend,
@@ -17,6 +17,7 @@ import DiversificationPanel from "@/components/portfolio/DiversificationPanel";
 import LearnTab            from "@/components/portfolio/LearnTab";
 import WatchlistTab        from "@/components/portfolio/WatchlistTab";
 import VelaLogo           from "@/components/ui/VelaLogo";
+import AnalysisWizard     from "@/components/community/AnalysisWizard";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 const TABS    = ["Portfolio", "News", "Analysis", "Learn", "Watchlist"];
@@ -836,9 +837,12 @@ export default function Home() {
   const [profileOpen,    setProfileOpen]    = useState(false);
   const [profileDragY,  setProfileDragY]  = useState(0);
   const profileDragStart = useRef<number | null>(null);
-  const [showBenchmarks, setShowBenchmarks] = useState(false);
-  const [displayedVal,   setDisplayedVal]   = useState(0);
-  const [expandedIds,    setExpandedIds]    = useState<Set<string>>(new Set());
+  const [showBenchmarks,     setShowBenchmarks]     = useState(false);
+  const [displayedVal,       setDisplayedVal]       = useState(0);
+  const [expandedIds,        setExpandedIds]        = useState<Set<string>>(new Set());
+  const [showAnalysisWizard, setShowAnalysisWizard] = useState(false);
+  const [communityAnalyses,  setCommunityAnalyses]  = useState<CommunityAnalysis[]>([]);
+  const [communityLoading,   setCommunityLoading]   = useState(false);
 
   // Lazy initializer reads localStorage immediately (client-only) — no flash
   const [appLang] = useState<Lang>(() =>
@@ -962,6 +966,17 @@ export default function Home() {
     setMarketLoading(false);
   }, [appLang, holdings]);
 
+  // ── Fetch community analyses ─────────────────────────────────────────────
+  const fetchCommunityAnalyses = useCallback(async () => {
+    setCommunityLoading(true);
+    try {
+      const res  = await fetch("/api/community-analyses");
+      const data = await res.json();
+      if (Array.isArray(data)) setCommunityAnalyses(data);
+    } catch {}
+    setCommunityLoading(false);
+  }, []);
+
   // ── Fetch news ────────────────────────────────────────────────────────────
   const fetchNews = useCallback(async (hs: Holding[]) => {
     setLoadingNews(true);
@@ -1078,6 +1093,7 @@ export default function Home() {
   useEffect(() => { if (!loadingDB) fetchNews(holdings);    }, [loadingDB, holdings, fetchNews]);
   useEffect(() => { if (!loadingDB) fetchSignals(holdings); }, [loadingDB, holdings, fetchSignals]);
   useEffect(() => { fetchMarketSignals(); }, [fetchMarketSignals]);
+  useEffect(() => { if (activeTab === "Analysis") fetchCommunityAnalyses(); }, [activeTab, fetchCommunityAnalyses]);
 
   // ── Auto-refresh news every 5 minutes ────────────────────────────────────
   useEffect(() => {
@@ -1193,6 +1209,15 @@ export default function Home() {
           onClose={() => setShowRiskModal(false)}
           onSave={(res) => { setRiskResult(res); setShowRiskModal(false); }}
           holdings={holdings}
+        />
+      )}
+      {showAnalysisWizard && (
+        <AnalysisWizard
+          onClose={() => setShowAnalysisWizard(false)}
+          onPublished={fetchCommunityAnalyses}
+          userId={userId}
+          displayName={displayName}
+          t={t}
         />
       )}
 
@@ -1748,6 +1773,142 @@ export default function Home() {
               })()}
             </div>
           )}
+
+          {/* ── Community Analyses ── */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white">
+                  💬 {t("Community Analyses", "Analisi della Community")}
+                </h2>
+                <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
+                  {t("Share your thesis, read others'", "Condividi la tua tesi, leggi quelle degli altri")}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAnalysisWizard(true)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold text-white transition-transform hover:scale-105 active:scale-95 shadow-lg"
+                style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
+                {t("+ Write", "+ Scrivi")}
+              </button>
+            </div>
+
+            {communityLoading && (
+              <div className="space-y-2">
+                {[1, 2].map(i => (
+                  <div key={i} className="rounded-2xl px-4 py-4 animate-pulse"
+                    style={{ backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", height: 90 }} />
+                ))}
+              </div>
+            )}
+
+            {!communityLoading && communityAnalyses.length === 0 && (
+              <div className="rounded-2xl p-6 text-center"
+                style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "2px dashed rgba(255,255,255,0.10)" }}>
+                <p className="text-2xl mb-2">✍️</p>
+                <p className="text-sm font-medium mb-1 text-white">
+                  {t("No analyses yet", "Nessuna analisi ancora")}
+                </p>
+                <p className="text-xs mb-3" style={{ color: "#64748B" }}>
+                  {t("Be the first to share your thesis", "Sii il primo a condividere la tua tesi")}
+                </p>
+                <button
+                  onClick={() => setShowAnalysisWizard(true)}
+                  className="px-5 py-2 rounded-full text-sm font-semibold text-white"
+                  style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
+                  {t("Write Analysis", "Scrivi Analisi")}
+                </button>
+              </div>
+            )}
+
+            {!communityLoading && communityAnalyses.length > 0 && (
+              <div className="space-y-3 pb-4">
+                {communityAnalyses.map(a => {
+                  const sentColor =
+                    a.sentiment === "bullish" ? "#16A34A" :
+                    a.sentiment === "bearish" ? "#DC2626" : "#CA8A04";
+                  const sentLabel =
+                    a.sentiment === "bullish" ? t("🐂 Bullish", "🐂 Rialzista") :
+                    a.sentiment === "bearish" ? t("🐻 Bearish", "🐻 Ribassista") :
+                                               t("⚖️ Neutral", "⚖️ Neutrale");
+                  const horizonLabel =
+                    a.horizon === "short" ? t("⚡ Short", "⚡ Breve") :
+                    a.horizon === "mid"   ? t("📅 Mid",   "📅 Medio") :
+                                           t("🌱 Long",  "🌱 Lungo");
+                  const convLabel =
+                    a.conviction === "low"    ? t("Low",    "Bassa") :
+                    a.conviction === "medium" ? t("Medium", "Media") :
+                                               t("High",   "Alta");
+                  const dateStr = new Date(a.created_at).toLocaleDateString(
+                    appLang === "it" ? "it-IT" : "en-GB",
+                    { day: "2-digit", month: "short" }
+                  );
+                  return (
+                    <div key={a.id} className="rounded-2xl px-4 py-3 space-y-2"
+                      style={{
+                        backgroundColor: "rgba(255,255,255,0.06)",
+                        border: `1px solid ${a.sentiment === "bullish" ? "rgba(74,222,128,0.18)" : a.sentiment === "bearish" ? "rgba(248,113,113,0.18)" : "rgba(255,255,255,0.10)"}`,
+                      }}>
+
+                      {/* Header row */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-mono font-bold text-sm text-white">
+                            {a.ticker}
+                          </span>
+                          {a.ticker_name && (
+                            <span className="text-xs truncate" style={{ color: "#64748B" }}>
+                              — {a.ticker_name}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs flex-shrink-0" style={{ color: "#475569" }}>
+                          {a.display_name} · {dateStr}
+                        </span>
+                      </div>
+
+                      {/* Chips */}
+                      <div className="flex gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: `${sentColor}22`, color: sentColor }}>
+                          {sentLabel}
+                        </span>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: "rgba(14,165,233,0.12)", color: "#38BDF8" }}>
+                          {horizonLabel}
+                        </span>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: "rgba(99,102,241,0.12)", color: "#A5B4FC" }}>
+                          {t("Conv:", "Conv:")} {convLabel}
+                        </span>
+                      </div>
+
+                      {/* Bull case */}
+                      <div>
+                        <p className="text-xs font-medium mb-0.5" style={{ color: "#4ADE80" }}>
+                          {t("Bull Case", "Tesi Rialzista")}
+                        </p>
+                        <p className="text-xs leading-relaxed" style={{ color: "#CBD5E1" }}>
+                          {a.bull_case}
+                        </p>
+                      </div>
+
+                      {/* Risk */}
+                      <div>
+                        <p className="text-xs font-medium mb-0.5" style={{ color: "#F87171" }}>
+                          {t("Risk", "Rischio")}
+                        </p>
+                        <p className="text-xs leading-relaxed" style={{ color: "#94A3B8" }}>
+                          {a.risk}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
         </div>
       )}
 
