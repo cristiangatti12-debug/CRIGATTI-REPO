@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="chartGlow" x1="64" y1="380" x2="370" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0EA5E9" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background: dark navy, matching app theme -->
+  <rect width="512" height="512" rx="112" fill="#0F1E38"/>
+
+  <!-- Chart area fill — cyan glow below the ascending line -->
+  <path
+    d="M64 420 L64 358 L158 278 L258 308 L368 215 L368 420 Z"
+    fill="url(#chartGlow)"
+  />
+
+  <!-- Subtle horizontal grid lines -->
+  <line x1="64" y1="360" x2="390" y2="360" stroke="white" stroke-opacity="0.04" stroke-width="2"/>
+  <line x1="64" y1="300" x2="390" y2="300" stroke="white" stroke-opacity="0.04" stroke-width="2"/>
+  <line x1="64" y1="240" x2="390" y2="240" stroke="white" stroke-opacity="0.04" stroke-width="2"/>
+
+  <!-- Chart line — ascending trend in cyan -->
+  <polyline
+    points="64,358 158,278 258,308 368,215"
+    stroke="#0EA5E9"
+    stroke-width="15"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    fill="none"
+  />
+
+  <!-- Data point dots -->
+  <circle cx="158" cy="278" r="10" fill="#0EA5E9"/>
+  <circle cx="258" cy="308" r="10" fill="#0EA5E9"/>
+  <!-- Peak dot — where chart meets mast -->
+  <circle cx="368" cy="215" r="14" fill="white"/>
+
+  <!-- Mast — rises from the chart peak upward -->
+  <line
+    x1="368" y1="215"
+    x2="368" y2="85"
+    stroke="white"
+    stroke-width="15"
+    stroke-linecap="round"
+  />
+
+  <!-- Main sail — large left-facing white triangle -->
+  <path d="M368 92 L368 210 L224 210 Z" fill="white" fill-opacity="0.95"/>
+
+  <!-- Jib — smaller right-facing triangle, light blue -->
+  <path d="M368 116 L368 206 L464 170 Z" fill="#BAE6FD" fill-opacity="0.75"/>
+</svg>

@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+:root {
+  --vela-navy:   #0A1628;
+  --vela-card:   rgba(255,255,255,0.07);
+  --vela-border: rgba(255,255,255,0.12);
+  --vela-accent: #0EA5E9;
+  --vela-gold:   #FCD34D;
+  --vela-text:   #F1F5F9;
+  --vela-muted:  #94A3B8;
+}
+
+body {
+  background-color: #0A1628;
+  color: #F1F5F9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Hero value count-up animation */
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-count-up {
+  animation: count-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Score bar fill animation (triggered on mount) */
+@keyframes score-fill {
+  from { width: 0 !important; }
+}
+.score-bar {
+  animation: score-fill 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
