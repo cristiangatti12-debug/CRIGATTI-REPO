@@ -185,6 +185,7 @@ export type Conviction = "low" | "medium" | "high";
 
 export interface CommunityAnalysis {
   id:           string;
+  user_id:      string;
   display_name: string;
   ticker:       string;
   ticker_name:  string;

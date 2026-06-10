@@ -41,15 +41,27 @@ async function moderate(bull_case: string, risk: string): Promise<{ ok: boolean;
   }
 }
 
-export async function GET() {
+const SELECT_FIELDS =
+  "id, user_id, display_name, ticker, ticker_name, sentiment, horizon, conviction, bull_case, risk, created_at";
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const tickerFilter      = searchParams.get("ticker")?.toUpperCase().trim() ?? "";
+  const displayNameFilter = searchParams.get("display_name")?.trim() ?? "";
+
   const supabase = await createClient();
-  const { data, error } = await supabase
+
+  let query = supabase
     .from("community_analyses")
-    .select("id, display_name, ticker, ticker_name, sentiment, horizon, conviction, bull_case, risk, created_at")
+    .select(SELECT_FIELDS)
     .eq("moderation_passed", true)
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(50);
 
+  if (tickerFilter)      query = query.eq("ticker", tickerFilter);
+  if (displayNameFilter) query = query.eq("display_name", displayNameFilter);
+
+  const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data ?? []);
 }
@@ -105,4 +117,23 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ id: data.id }, { status: 201 });
+}
+
+export async function DELETE(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id")?.trim();
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
+  const { error } = await supabase
+    .from("community_analyses")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return new NextResponse(null, { status: 204 });
 }

@@ -18,9 +18,11 @@ import LearnTab            from "@/components/portfolio/LearnTab";
 import WatchlistTab        from "@/components/portfolio/WatchlistTab";
 import VelaLogo           from "@/components/ui/VelaLogo";
 import AnalysisWizard     from "@/components/community/AnalysisWizard";
+import UserProfileDrawer  from "@/components/community/UserProfileDrawer";
+import TickerDetailDrawer from "@/components/community/TickerDetailDrawer";
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
-const TABS    = ["Portfolio", "News", "Analysis", "Learn", "Watchlist"];
+const TABS    = ["Portfolio", "News", "Analysis", "Learn", "Watchlist", "Community"];
 const PERIODS = ["1W", "1M", "3M", "1Y"];
 
 type Signal = "BUY" | "HOLD" | "SELL";
@@ -843,6 +845,9 @@ export default function Home() {
   const [showAnalysisWizard, setShowAnalysisWizard] = useState(false);
   const [communityAnalyses,  setCommunityAnalyses]  = useState<CommunityAnalysis[]>([]);
   const [communityLoading,   setCommunityLoading]   = useState(false);
+  const [profileSubject,     setProfileSubject]     = useState<string | null>(null);
+  const [tickerDetail,       setTickerDetail]       = useState<{ ticker: string; name: string } | null>(null);
+  const [showAllCommunity,   setShowAllCommunity]   = useState(false);
 
   // Lazy initializer reads localStorage immediately (client-only) — no flash
   const [appLang] = useState<Lang>(() =>
@@ -977,6 +982,13 @@ export default function Home() {
     setCommunityLoading(false);
   }, []);
 
+  async function handleDeleteAnalysis(id: string) {
+    try {
+      await fetch(`/api/community-analyses?id=${id}`, { method: "DELETE" });
+      setCommunityAnalyses(prev => prev.filter(a => a.id !== id));
+    } catch {}
+  }
+
   // ── Fetch news ────────────────────────────────────────────────────────────
   const fetchNews = useCallback(async (hs: Holding[]) => {
     setLoadingNews(true);
@@ -1093,7 +1105,9 @@ export default function Home() {
   useEffect(() => { if (!loadingDB) fetchNews(holdings);    }, [loadingDB, holdings, fetchNews]);
   useEffect(() => { if (!loadingDB) fetchSignals(holdings); }, [loadingDB, holdings, fetchSignals]);
   useEffect(() => { fetchMarketSignals(); }, [fetchMarketSignals]);
-  useEffect(() => { if (activeTab === "Analysis") fetchCommunityAnalyses(); }, [activeTab, fetchCommunityAnalyses]);
+  useEffect(() => {
+    if (activeTab === "Analysis" || activeTab === "Community") fetchCommunityAnalyses();
+  }, [activeTab, fetchCommunityAnalyses]);
 
   // ── Auto-refresh news every 5 minutes ────────────────────────────────────
   useEffect(() => {
@@ -1220,6 +1234,24 @@ export default function Home() {
           t={t}
         />
       )}
+      {profileSubject && (
+        <UserProfileDrawer
+          displayName={profileSubject}
+          analyses={communityAnalyses.filter(a => a.display_name === profileSubject)}
+          onTickerClick={(ticker, name) => { setProfileSubject(null); setTickerDetail({ ticker, name }); }}
+          onClose={() => setProfileSubject(null)}
+          t={t}
+        />
+      )}
+      {tickerDetail && (
+        <TickerDetailDrawer
+          ticker={tickerDetail.ticker}
+          tickerName={tickerDetail.name}
+          onClose={() => setTickerDetail(null)}
+          t={t}
+          appLang={appLang}
+        />
+      )}
 
       {/* ── HEADER ── */}
       <div className="px-4 pt-10 pb-5 relative overflow-hidden"
@@ -1288,7 +1320,7 @@ export default function Home() {
         <div className="flex gap-2 overflow-x-auto no-scrollbar relative">
           {TABS.map(tab => {
             const label = appLang === "it"
-              ? ({ Portfolio: "Portafoglio", News: "Notizie", Analysis: "Analisi", Learn: "Impara", Watchlist: "Osservati" }[tab] ?? tab)
+              ? ({ Portfolio: "Portafoglio", News: "Notizie", Analysis: "Analisi", Learn: "Impara", Watchlist: "Osservati", Community: "Community" }[tab] ?? tab)
               : tab;
             return (
               <button key={tab} onClick={() => setActiveTab(tab)}
@@ -1775,139 +1807,176 @@ export default function Home() {
           )}
 
           {/* ── Community Analyses ── */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h2 className="text-sm font-semibold text-white">
-                  💬 {t("Community Analyses", "Analisi della Community")}
-                </h2>
-                <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
-                  {t("Share your thesis, read others'", "Condividi la tua tesi, leggi quelle degli altri")}
-                </p>
-              </div>
-              <button
-                onClick={() => setShowAnalysisWizard(true)}
-                className="px-3 py-1.5 rounded-full text-xs font-semibold text-white transition-transform hover:scale-105 active:scale-95 shadow-lg"
-                style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
-                {t("+ Write", "+ Scrivi")}
-              </button>
-            </div>
+          {(() => {
+            const heldTickers = new Set(enriched.map(h => h.ticker.toUpperCase()));
+            const myTicker    = communityAnalyses.filter(a => heldTickers.has(a.ticker.toUpperCase()));
+            const otherAll    = communityAnalyses.filter(a => !heldTickers.has(a.ticker.toUpperCase()));
 
-            {communityLoading && (
-              <div className="space-y-2">
-                {[1, 2].map(i => (
-                  <div key={i} className="rounded-2xl px-4 py-4 animate-pulse"
-                    style={{ backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", height: 90 }} />
-                ))}
-              </div>
-            )}
-
-            {!communityLoading && communityAnalyses.length === 0 && (
-              <div className="rounded-2xl p-6 text-center"
-                style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "2px dashed rgba(255,255,255,0.10)" }}>
-                <p className="text-2xl mb-2">✍️</p>
-                <p className="text-sm font-medium mb-1 text-white">
-                  {t("No analyses yet", "Nessuna analisi ancora")}
-                </p>
-                <p className="text-xs mb-3" style={{ color: "#64748B" }}>
-                  {t("Be the first to share your thesis", "Sii il primo a condividere la tua tesi")}
-                </p>
-                <button
-                  onClick={() => setShowAnalysisWizard(true)}
-                  className="px-5 py-2 rounded-full text-sm font-semibold text-white"
-                  style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
-                  {t("Write Analysis", "Scrivi Analisi")}
-                </button>
-              </div>
-            )}
-
-            {!communityLoading && communityAnalyses.length > 0 && (
-              <div className="space-y-3 pb-4">
-                {communityAnalyses.map(a => {
-                  const sentColor =
-                    a.sentiment === "bullish" ? "#16A34A" :
-                    a.sentiment === "bearish" ? "#DC2626" : "#CA8A04";
-                  const sentLabel =
-                    a.sentiment === "bullish" ? t("🐂 Bullish", "🐂 Rialzista") :
-                    a.sentiment === "bearish" ? t("🐻 Bearish", "🐻 Ribassista") :
-                                               t("⚖️ Neutral", "⚖️ Neutrale");
-                  const horizonLabel =
-                    a.horizon === "short" ? t("⚡ Short", "⚡ Breve") :
-                    a.horizon === "mid"   ? t("📅 Mid",   "📅 Medio") :
-                                           t("🌱 Long",  "🌱 Lungo");
-                  const convLabel =
-                    a.conviction === "low"    ? t("Low",    "Bassa") :
-                    a.conviction === "medium" ? t("Medium", "Media") :
-                                               t("High",   "Alta");
-                  const dateStr = new Date(a.created_at).toLocaleDateString(
-                    appLang === "it" ? "it-IT" : "en-GB",
-                    { day: "2-digit", month: "short" }
-                  );
-                  return (
-                    <div key={a.id} className="rounded-2xl px-4 py-3 space-y-2"
-                      style={{
-                        backgroundColor: "rgba(255,255,255,0.06)",
-                        border: `1px solid ${a.sentiment === "bullish" ? "rgba(74,222,128,0.18)" : a.sentiment === "bearish" ? "rgba(248,113,113,0.18)" : "rgba(255,255,255,0.10)"}`,
-                      }}>
-
-                      {/* Header row */}
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-mono font-bold text-sm text-white">
-                            {a.ticker}
-                          </span>
-                          {a.ticker_name && (
-                            <span className="text-xs truncate" style={{ color: "#64748B" }}>
-                              — {a.ticker_name}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-xs flex-shrink-0" style={{ color: "#475569" }}>
-                          {a.display_name} · {dateStr}
-                        </span>
-                      </div>
-
-                      {/* Chips */}
-                      <div className="flex gap-1.5 flex-wrap">
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: `${sentColor}22`, color: sentColor }}>
-                          {sentLabel}
-                        </span>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: "rgba(14,165,233,0.12)", color: "#38BDF8" }}>
-                          {horizonLabel}
-                        </span>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: "rgba(99,102,241,0.12)", color: "#A5B4FC" }}>
-                          {t("Conv:", "Conv:")} {convLabel}
-                        </span>
-                      </div>
-
-                      {/* Bull case */}
-                      <div>
-                        <p className="text-xs font-medium mb-0.5" style={{ color: "#4ADE80" }}>
-                          {t("Bull Case", "Tesi Rialzista")}
-                        </p>
-                        <p className="text-xs leading-relaxed" style={{ color: "#CBD5E1" }}>
-                          {a.bull_case}
-                        </p>
-                      </div>
-
-                      {/* Risk */}
-                      <div>
-                        <p className="text-xs font-medium mb-0.5" style={{ color: "#F87171" }}>
-                          {t("Risk", "Rischio")}
-                        </p>
-                        <p className="text-xs leading-relaxed" style={{ color: "#94A3B8" }}>
-                          {a.risk}
-                        </p>
-                      </div>
+            function CommunityCard({ a }: { a: CommunityAnalysis }) {
+              const sentColor =
+                a.sentiment === "bullish" ? "#16A34A" :
+                a.sentiment === "bearish" ? "#DC2626" : "#CA8A04";
+              const sentLabel =
+                a.sentiment === "bullish" ? t("🐂 Bullish", "🐂 Rialzista") :
+                a.sentiment === "bearish" ? t("🐻 Bearish", "🐻 Ribassista") :
+                                           t("⚖️ Neutral", "⚖️ Neutrale");
+              const horizonLabel =
+                a.horizon === "short" ? t("⚡ Short", "⚡ Breve") :
+                a.horizon === "mid"   ? t("📅 Mid",   "📅 Medio") :
+                                       t("🌱 Long",  "🌱 Lungo");
+              const convLabel =
+                a.conviction === "low"    ? t("Low",    "Bassa") :
+                a.conviction === "medium" ? t("Medium", "Media") :
+                                           t("High",   "Alta");
+              const dateStr = new Date(a.created_at).toLocaleDateString(
+                appLang === "it" ? "it-IT" : "en-GB",
+                { day: "2-digit", month: "short" }
+              );
+              return (
+                <div className="rounded-2xl px-4 py-3 space-y-2"
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.06)",
+                    border: `1px solid ${a.sentiment === "bullish" ? "rgba(74,222,128,0.18)" : a.sentiment === "bearish" ? "rgba(248,113,113,0.18)" : "rgba(255,255,255,0.10)"}`,
+                  }}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        onClick={() => setTickerDetail({ ticker: a.ticker, name: a.ticker_name })}
+                        className="font-mono font-bold text-sm transition-opacity hover:opacity-70"
+                        style={{ color: "#38BDF8" }}>
+                        {a.ticker}
+                      </button>
+                      {a.ticker_name && (
+                        <span className="text-xs truncate" style={{ color: "#64748B" }}>— {a.ticker_name}</span>
+                      )}
                     </div>
-                  );
-                })}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => setProfileSubject(a.display_name)}
+                        className="text-xs transition-opacity hover:opacity-70"
+                        style={{ color: "#64748B" }}>
+                        {a.display_name} · {dateStr}
+                      </button>
+                      {a.user_id === userId && (
+                        <button
+                          onClick={() => handleDeleteAnalysis(a.id)}
+                          className="text-xs px-1.5 py-0.5 rounded-full transition-opacity hover:opacity-70"
+                          style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#F87171" }}>
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={{ backgroundColor: `${sentColor}22`, color: sentColor }}>{sentLabel}</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={{ backgroundColor: "rgba(14,165,233,0.12)", color: "#38BDF8" }}>{horizonLabel}</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                      style={{ backgroundColor: "rgba(99,102,241,0.12)", color: "#A5B4FC" }}>
+                      {t("Conv:", "Conv:")} {convLabel}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium mb-0.5" style={{ color: "#4ADE80" }}>{t("Bull Case", "Tesi Rialzista")}</p>
+                    <p className="text-xs leading-relaxed" style={{ color: "#CBD5E1" }}>{a.bull_case}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium mb-0.5" style={{ color: "#F87171" }}>{t("Risk", "Rischio")}</p>
+                    <p className="text-xs leading-relaxed" style={{ color: "#94A3B8" }}>{a.risk}</p>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">
+                      💬 {t("Community Analyses", "Analisi della Community")}
+                    </h2>
+                    <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
+                      {t("Share your thesis, read others'", "Condividi la tua tesi, leggi quelle degli altri")}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowAnalysisWizard(true)}
+                    className="px-3 py-1.5 rounded-full text-xs font-semibold text-white transition-transform hover:scale-105 active:scale-95 shadow-lg"
+                    style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
+                    {t("+ Write", "+ Scrivi")}
+                  </button>
+                </div>
+
+                {communityLoading && (
+                  <div className="space-y-2">
+                    {[1, 2].map(i => (
+                      <div key={i} className="rounded-2xl px-4 py-4 animate-pulse"
+                        style={{ backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", height: 90 }} />
+                    ))}
+                  </div>
+                )}
+
+                {!communityLoading && communityAnalyses.length === 0 && (
+                  <div className="rounded-2xl p-6 text-center"
+                    style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "2px dashed rgba(255,255,255,0.10)" }}>
+                    <p className="text-2xl mb-2">✍️</p>
+                    <p className="text-sm font-medium mb-1 text-white">{t("No analyses yet", "Nessuna analisi ancora")}</p>
+                    <p className="text-xs mb-3" style={{ color: "#64748B" }}>
+                      {t("Be the first to share your thesis", "Sii il primo a condividere la tua tesi")}
+                    </p>
+                    <button onClick={() => setShowAnalysisWizard(true)}
+                      className="px-5 py-2 rounded-full text-sm font-semibold text-white"
+                      style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
+                      {t("Write Analysis", "Scrivi Analisi")}
+                    </button>
+                  </div>
+                )}
+
+                {!communityLoading && communityAnalyses.length > 0 && (
+                  <div className="space-y-4 pb-4">
+                    {/* My holdings section */}
+                    {myTicker.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: "#38BDF8" }}>
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: "#38BDF8" }} />
+                          {t("For Your Holdings", "Per i Tuoi Titoli")}
+                        </p>
+                        <div className="space-y-3">
+                          {myTicker.map(a => <CommunityCard key={a.id} a={a} />)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* All analyses */}
+                    {otherAll.length > 0 && (
+                      <div>
+                        {myTicker.length > 0 && (
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "#64748B" }}>
+                              <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: "#64748B" }} />
+                              {t("All Analyses", "Tutte le Analisi")}
+                            </p>
+                            <button
+                              onClick={() => setShowAllCommunity(v => !v)}
+                              className="text-xs font-medium"
+                              style={{ color: "#38BDF8" }}>
+                              {showAllCommunity ? t("Hide ▲", "Nascondi ▲") : `${t("Show", "Mostra")} ${otherAll.length} ▼`}
+                            </button>
+                          </div>
+                        )}
+                        {(myTicker.length === 0 || showAllCommunity) && (
+                          <div className="space-y-3">
+                            {otherAll.map(a => <CommunityCard key={a.id} a={a} />)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
         </div>
       )}
@@ -1927,6 +1996,135 @@ export default function Home() {
             setShowAdd(true);
           }}
         />
+      )}
+
+      {/* ── COMMUNITY ── */}
+      {activeTab === "Community" && (
+        <div className="px-4 py-4 space-y-4">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-white">
+                💬 {t("Community", "Community")}
+              </h2>
+              <p className="text-xs mt-0.5" style={{ color: "#64748B" }}>
+                {t("Analyses shared by the community", "Analisi condivise dalla community")}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAnalysisWizard(true)}
+              className="px-3 py-1.5 rounded-full text-xs font-semibold text-white transition-transform hover:scale-105 active:scale-95 shadow-lg"
+              style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
+              {t("+ Write", "+ Scrivi")}
+            </button>
+          </div>
+
+          {communityLoading && (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="rounded-2xl px-4 py-4 animate-pulse"
+                  style={{ backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", height: 100 }} />
+              ))}
+            </div>
+          )}
+
+          {!communityLoading && communityAnalyses.length === 0 && (
+            <div className="rounded-2xl p-8 text-center"
+              style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "2px dashed rgba(255,255,255,0.10)" }}>
+              <p className="text-3xl mb-2">✍️</p>
+              <p className="text-sm font-medium mb-1 text-white">{t("No analyses yet", "Nessuna analisi ancora")}</p>
+              <p className="text-xs mb-4" style={{ color: "#94A3B8" }}>
+                {t("Be the first to share your thesis", "Sii il primo a condividere la tua tesi")}
+              </p>
+              <button onClick={() => setShowAnalysisWizard(true)}
+                className="px-5 py-2 rounded-full text-sm font-semibold text-white"
+                style={{ background: "linear-gradient(135deg, #0EA5E9, #6366F1)" }}>
+                {t("Write Analysis", "Scrivi Analisi")}
+              </button>
+            </div>
+          )}
+
+          {!communityLoading && communityAnalyses.length > 0 && (
+            <div className="space-y-3 pb-28">
+              {communityAnalyses.map(a => {
+                const sentColor =
+                  a.sentiment === "bullish" ? "#16A34A" :
+                  a.sentiment === "bearish" ? "#DC2626" : "#CA8A04";
+                const sentLabel =
+                  a.sentiment === "bullish" ? t("🐂 Bullish", "🐂 Rialzista") :
+                  a.sentiment === "bearish" ? t("🐻 Bearish", "🐻 Ribassista") :
+                                             t("⚖️ Neutral", "⚖️ Neutrale");
+                const horizonLabel =
+                  a.horizon === "short" ? t("⚡ Short", "⚡ Breve") :
+                  a.horizon === "mid"   ? t("📅 Mid",   "📅 Medio") :
+                                         t("🌱 Long",  "🌱 Lungo");
+                const convLabel =
+                  a.conviction === "low"    ? t("Low",    "Bassa") :
+                  a.conviction === "medium" ? t("Medium", "Media") :
+                                             t("High",   "Alta");
+                const dateStr = new Date(a.created_at).toLocaleDateString(
+                  appLang === "it" ? "it-IT" : "en-GB",
+                  { day: "2-digit", month: "short" }
+                );
+                return (
+                  <div key={a.id} className="rounded-2xl px-4 py-3 space-y-2"
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.06)",
+                      border: `1px solid ${a.sentiment === "bullish" ? "rgba(74,222,128,0.18)" : a.sentiment === "bearish" ? "rgba(248,113,113,0.18)" : "rgba(255,255,255,0.10)"}`,
+                    }}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <button
+                          onClick={() => setTickerDetail({ ticker: a.ticker, name: a.ticker_name })}
+                          className="font-mono font-bold text-sm transition-opacity hover:opacity-70"
+                          style={{ color: "#38BDF8" }}>
+                          {a.ticker}
+                        </button>
+                        {a.ticker_name && (
+                          <span className="text-xs truncate" style={{ color: "#64748B" }}>— {a.ticker_name}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => setProfileSubject(a.display_name)}
+                          className="text-xs transition-opacity hover:opacity-70"
+                          style={{ color: "#64748B" }}>
+                          {a.display_name} · {dateStr}
+                        </button>
+                        {a.user_id === userId && (
+                          <button
+                            onClick={() => handleDeleteAnalysis(a.id)}
+                            className="text-xs px-1.5 py-0.5 rounded-full transition-opacity hover:opacity-70"
+                            style={{ backgroundColor: "rgba(239,68,68,0.15)", color: "#F87171" }}>
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: `${sentColor}22`, color: sentColor }}>{sentLabel}</span>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "rgba(14,165,233,0.12)", color: "#38BDF8" }}>{horizonLabel}</span>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "rgba(99,102,241,0.12)", color: "#A5B4FC" }}>
+                        {t("Conv:", "Conv:")} {convLabel}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium mb-0.5" style={{ color: "#4ADE80" }}>{t("Bull Case", "Tesi Rialzista")}</p>
+                      <p className="text-xs leading-relaxed" style={{ color: "#CBD5E1" }}>{a.bull_case}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium mb-0.5" style={{ color: "#F87171" }}>{t("Risk", "Rischio")}</p>
+                      <p className="text-xs leading-relaxed" style={{ color: "#94A3B8" }}>{a.risk}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── PROFILE SLIDE-UP PANEL ── */}
