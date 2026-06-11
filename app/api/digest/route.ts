@@ -95,10 +95,12 @@ export async function POST(req: NextRequest) {
     const newBuys = holdings.filter(h => signals[h.ticker]?.signal === "BUY").map(h => h.ticker);
     const newSells = holdings.filter(h => signals[h.ticker]?.signal === "SELL").map(h => h.ticker);
 
+    const changePct = (pct: number | undefined) => pct ?? 0;
+
     const prompt =
       `Generate a brief, actionable 3-sentence daily portfolio insight for a beginner investor.\n\n` +
       `Portfolio:\n` +
-      `${holdings.map(h => `- ${h.ticker}: ${h.shares} shares @ €${h.cost_per_share} (${h.change_pct >= 0 ? "+" : ""}${h.change_pct?.toFixed(1) ?? 0}% today)`).join("\n")}\n\n` +
+      `${holdings.map(h => `- ${h.ticker}: ${h.shares} shares @ €${h.cost_per_share} (${changePct(h.change_pct) >= 0 ? "+" : ""}${changePct(h.change_pct).toFixed(1)}% today)`).join("\n")}\n\n` +
       `Market signals:\n` +
       `- Biggest mover today: ${biggestMover}\n` +
       `- New BUY signals: ${newBuys.length > 0 ? newBuys.join(", ") : "None"}\n` +
