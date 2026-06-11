@@ -12,6 +12,13 @@ interface HoldingSlim {
   currency?:      string;
 }
 
+interface ExtendedAllocationResult extends AllocationResult {
+  confidence_score?: number;
+  key_risks?:        string[];
+  learning_notes?:   string;
+  model_used?:       string;
+}
+
 interface Props {
   onClose:             () => void;
   lang:                "en" | "it";
@@ -30,7 +37,7 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 export default function AllocationScreen({
   onClose, lang, profile, score, holdings, full_questionnaire, behavioral_flags, risk_profile
 }: Props) {
-  const [result,  setResult]  = useState<AllocationResult | null>(null);
+  const [result,  setResult]  = useState<ExtendedAllocationResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
@@ -69,7 +76,7 @@ export default function AllocationScreen({
 
       const res = await fetch(url);
       if (!res.ok) throw new Error();
-      const data: AllocationResult = await res.json();
+      const data: ExtendedAllocationResult = await res.json();
       setResult(data);
       localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
 
@@ -82,15 +89,18 @@ export default function AllocationScreen({
     setLoading(false);
   }
 
-  async function saveAllocationHistory(allocationData: AllocationResult) {
+  async function saveAllocationHistory(allocationData: ExtendedAllocationResult) {
     try {
       const { data } = await supabase.auth.getUser();
       if (!data.user) return;
 
-      // Get current market context (VIX, date, etc.)
+      // Get current market context (timestamp, model used, etc.)
       const marketContext = {
         timestamp: new Date().toISOString(),
         date: new Date().toLocaleDateString("en-CA"),
+        model_used: allocationData.model_used || "Unknown",
+        confidence_score: allocationData.confidence_score || null,
+        key_risks: allocationData.key_risks || [],
       };
 
       // Compute portfolio snapshot (% per asset class)

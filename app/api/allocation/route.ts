@@ -16,6 +16,15 @@ interface ExtendedAllocationResult extends AllocationResult {
   confidence_score: number;
   key_risks:        string[];
   learning_notes:   string;
+  model_used:       string;
+}
+
+type AnthropicModel = "claude-3-5-sonnet-20241022" | "claude-3-haiku-20240307";
+
+interface ModelAttempt {
+  model: AnthropicModel;
+  name: string;
+  maxTokens: number;
 }
 
 export async function GET(req: NextRequest) {
@@ -106,27 +115,43 @@ export async function GET(req: NextRequest) {
     `- example_instrument: real ticker/ETF available in Europe\n` +
     `- learning_notes: Actionable insight for refinement`;
 
-  try {
-    const response = await client.messages.create({
-      model:       "claude-3-5-sonnet-20241022",
-      max_tokens:  1500,
-      temperature: 0.6,
-      messages:    [{ role: "user", content: prompt }],
-    });
+  // Try models in order: Sonnet → Haiku → Fallback
+  const models: ModelAttempt[] = [
+    { model: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", maxTokens: 1500 },
+    { model: "claude-3-haiku-20240307", name: "Claude 3 Haiku", maxTokens: 1200 },
+  ];
 
-    const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
-    const cleaned = raw.replace(/```json|```/g, "").trim();
-    const result = JSON.parse(cleaned) as ExtendedAllocationResult;
+  for (const modelAttempt of models) {
+    try {
+      const response = await client.messages.create({
+        model:       modelAttempt.model,
+        max_tokens:  modelAttempt.maxTokens,
+        temperature: 0.6,
+        messages:    [{ role: "user", content: prompt }],
+      });
 
-    // Sanity: allocation must sum to ~100
-    const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
-    if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
+      const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
+      const cleaned = raw.replace(/```json|```/g, "").trim();
+      const result = JSON.parse(cleaned) as ExtendedAllocationResult;
 
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error("[/api/allocation] Claude error:", error);
-    return NextResponse.json(getFallbackAllocation(profile));
+      // Sanity: allocation must sum to ~100
+      const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
+      if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
+
+      // Add model_used for tracking
+      result.model_used = modelAttempt.name;
+      return NextResponse.json(result);
+    } catch (error) {
+      console.error(`[/api/allocation] ${modelAttempt.name} failed:`, error);
+      // Continue to next model
+    }
   }
+
+  // All models failed — return fallback
+  console.error("[/api/allocation] All models failed, returning fallback allocation");
+  const fallback = getFallbackAllocation(profile);
+  return NextResponse.json({ ...fallback, model_used: "Fallback" });
+}
 }
 
 function buildBehaviorContext(flags: BehaviorFlags): string {

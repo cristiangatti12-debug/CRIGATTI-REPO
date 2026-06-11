@@ -438,6 +438,8 @@ export default function RiskModal({ lang, onClose, onSave, holdings = [] }: Prop
       setExtendedResult(extended);
       setStep("result");
       persistResult(baseResult, extended, next);
+      // Auto-show allocation after short delay for smooth UX
+      setTimeout(() => setShowAllocation(true), 800);
     }
   }
 
