@@ -244,30 +244,63 @@ function saneTrailingPE(v: unknown): number | null {
   return typeof n === "number" && isFinite(n) && n > 0 && n < 300 ? n : null;
 }
 
+// One-shot diagnostic to surface what FMP actually returns for failing
+// tickers. Logs response status + a compact view of the body so prod logs
+// reveal whether the plan is rate-limited, returns null pe, or uses a
+// different field name. Remove once the right field is confirmed.
+function logFMPMiss(endpoint: string, ticker: string, status: number, body: unknown): void {
+  let preview: string;
+  if (Array.isArray(body)) {
+    const first = body[0];
+    preview = first
+      ? `array[${body.length}] keys=${Object.keys(first).slice(0, 12).join(",")} pe=${JSON.stringify(first.pe)} peRatioTTM=${JSON.stringify(first.peRatioTTM)} priceEarningsRatioTTM=${JSON.stringify(first.priceEarningsRatioTTM)}`
+      : `array[0]`;
+  } else if (body && typeof body === "object") {
+    preview = `object keys=${Object.keys(body as object).slice(0, 12).join(",")} sample=${JSON.stringify(body).slice(0, 200)}`;
+  } else {
+    preview = `non-object ${typeof body} sample=${JSON.stringify(body).slice(0, 200)}`;
+  }
+  console.warn(`[vela] FMP ${endpoint} ${ticker} status=${status} → ${preview}`);
+}
+
 async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
   const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
   if (!FMP_KEY) return null;
-  // Primary: /api/v3/quote returns pe inline for most tickers in one call.
+
+  // Primary: /api/v3/quote returns pe inline.
   try {
     const url = `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`;
     const res = await fetch(url, { next: { revalidate: 3600 } } as RequestInit);
-    if (res.ok) {
-      const json = await res.json();
-      const q = Array.isArray(json) && json.length > 0 ? json[0] : null;
-      const pe = saneTrailingPE(q?.pe);
-      if (pe) return pe;
-    }
-  } catch { /* fall through to key-metrics */ }
-  // Secondary: /stable/key-metrics-ttm exposes peRatioTTM even when /quote
-  // returns a stale or null pe (common for non-AAPL US tickers on free tier).
+    const json = res.ok ? await res.json() : null;
+    const q = Array.isArray(json) && json.length > 0 ? json[0] : null;
+    const pe = saneTrailingPE(q?.pe);
+    if (pe) return pe;
+    logFMPMiss("/api/v3/quote", ticker, res.status, json);
+  } catch (e) { console.warn(`[vela] FMP /api/v3/quote ${ticker} threw: ${(e as Error).message}`); }
+
+  // Secondary: /stable/key-metrics-ttm — peRatioTTM field.
   try {
     const url = `https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
     const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
-    if (!res.ok) return null;
-    const json = await res.json();
+    const json = res.ok ? await res.json() : null;
     const m = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    return saneTrailingPE(m?.peRatioTTM ?? m?.peRatio);
-  } catch { return null; }
+    const pe = saneTrailingPE(m?.peRatioTTM ?? m?.peRatio);
+    if (pe) return pe;
+    logFMPMiss("/stable/key-metrics-ttm", ticker, res.status, json);
+  } catch (e) { console.warn(`[vela] FMP /stable/key-metrics-ttm ${ticker} threw: ${(e as Error).message}`); }
+
+  // Tertiary: /stable/ratios-ttm — priceEarningsRatioTTM field.
+  try {
+    const url = `https://financialmodelingprep.com/stable/ratios-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
+    const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
+    const json = res.ok ? await res.json() : null;
+    const r = Array.isArray(json) && json.length > 0 ? json[0] : null;
+    const pe = saneTrailingPE(r?.priceEarningsRatioTTM ?? r?.peRatioTTM);
+    if (pe) return pe;
+    logFMPMiss("/stable/ratios-ttm", ticker, res.status, json);
+  } catch (e) { console.warn(`[vela] FMP /stable/ratios-ttm ${ticker} threw: ${(e as Error).message}`); }
+
+  return null;
 }
 
 async function fetchYFQuoteSummaryPE(ticker: string): Promise<number | null> {
