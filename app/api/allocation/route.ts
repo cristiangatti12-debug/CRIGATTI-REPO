@@ -19,10 +19,8 @@ interface ExtendedAllocationResult extends AllocationResult {
   model_used:       string;
 }
 
-type AnthropicModel = "claude-3-5-sonnet-20241022" | "claude-3-haiku-20240307";
-
 interface ModelAttempt {
-  model: AnthropicModel;
+  type: "groq" | "gemini" | "claude";
   name: string;
   maxTokens: number;
 }
@@ -31,7 +29,6 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const profile = searchParams.get("profile") ?? "Balanced";
   const score   = parseInt(searchParams.get("score") ?? "12", 10);
-  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY?.replace(/^﻿/, "").trim();
 
   let holdings: HoldingParam[] = [];
   let fullQuestionnaire: Record<string, any> = {};
@@ -60,10 +57,6 @@ export async function GET(req: NextRequest) {
     : "No holdings yet — portfolio is empty";
 
   const totalValue = holdings.reduce((s, h) => s + h.shares * h.cost_per_share, 0);
-
-  if (!ANTHROPIC_KEY) return NextResponse.json(getFallbackAllocation(profile));
-
-  const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
   const behaviorContext = buildBehaviorContext(behaviorFlags);
   const questionnaireSummary = buildQuestionnaireSummary(fullQuestionnaire);
@@ -115,35 +108,31 @@ export async function GET(req: NextRequest) {
     `- example_instrument: real ticker/ETF available in Europe\n` +
     `- learning_notes: Actionable insight for refinement`;
 
-  // Try models in order: Sonnet → Haiku → Fallback
+  // Try models in order: Groq (free) → Gemini (free) → Claude (paid optional) → Fallback
   const models: ModelAttempt[] = [
-    { model: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", maxTokens: 1500 },
-    { model: "claude-3-haiku-20240307", name: "Claude 3 Haiku", maxTokens: 1200 },
+    { type: "groq", name: "Groq (Free)", maxTokens: 1500 },
+    { type: "gemini", name: "Google Gemini (Free)", maxTokens: 1500 },
+    { type: "claude", name: "Claude 3.5 Sonnet", maxTokens: 1500 },
   ];
 
   for (const modelAttempt of models) {
     try {
-      const response = await client.messages.create({
-        model:       modelAttempt.model,
-        max_tokens:  modelAttempt.maxTokens,
-        temperature: 0.6,
-        messages:    [{ role: "user", content: prompt }],
-      });
+      let result: ExtendedAllocationResult | null = null;
 
-      const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
-      const cleaned = raw.replace(/```json|```/g, "").trim();
-      const result = JSON.parse(cleaned) as ExtendedAllocationResult;
+      if (modelAttempt.type === "groq") {
+        result = await tryGroq(prompt, modelAttempt.maxTokens);
+      } else if (modelAttempt.type === "gemini") {
+        result = await tryGemini(prompt, modelAttempt.maxTokens);
+      } else if (modelAttempt.type === "claude") {
+        result = await tryClaude(prompt, modelAttempt.maxTokens);
+      }
 
-      // Sanity: allocation must sum to ~100
-      const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
-      if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
-
-      // Add model_used for tracking
-      result.model_used = modelAttempt.name;
-      return NextResponse.json(result);
+      if (result) {
+        result.model_used = modelAttempt.name;
+        return NextResponse.json(result);
+      }
     } catch (error) {
       console.error(`[/api/allocation] ${modelAttempt.name} failed:`, error);
-      // Continue to next model
     }
   }
 
@@ -152,6 +141,87 @@ export async function GET(req: NextRequest) {
   const fallback = getFallbackAllocation(profile);
   return NextResponse.json({ ...fallback, model_used: "Fallback" });
 }
+
+async function tryGroq(prompt: string, maxTokens: number): Promise<ExtendedAllocationResult | null> {
+  const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim();
+  if (!GROQ_KEY) return null;
+
+  const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${GROQ_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      max_tokens: maxTokens,
+      temperature: 0.6,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  if (!groqRes.ok) throw new Error(`Groq ${groqRes.status}`);
+
+  const data = await groqRes.json();
+  const raw = data.choices?.[0]?.message?.content ?? "";
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const result = JSON.parse(cleaned) as ExtendedAllocationResult;
+
+  const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
+  if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
+
+  return result;
+}
+
+async function tryGemini(prompt: string, maxTokens: number): Promise<ExtendedAllocationResult | null> {
+  const GEMINI_KEY = process.env.GOOGLE_AI_API_KEY?.replace(/^﻿/, "").trim();
+  if (!GEMINI_KEY) return null;
+
+  const geminiRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.6 },
+      }),
+    }
+  );
+
+  if (!geminiRes.ok) throw new Error(`Gemini ${geminiRes.status}`);
+
+  const data = await geminiRes.json();
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const result = JSON.parse(cleaned) as ExtendedAllocationResult;
+
+  const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
+  if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
+
+  return result;
+}
+
+async function tryClaude(prompt: string, maxTokens: number): Promise<ExtendedAllocationResult | null> {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY?.replace(/^﻿/, "").trim();
+  if (!ANTHROPIC_KEY) return null;
+
+  const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
+  const response = await client.messages.create({
+    model: "claude-3-5-sonnet-20241022",
+    max_tokens: maxTokens,
+    temperature: 0.6,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
+  const cleaned = raw.replace(/```json|```/g, "").trim();
+  const result = JSON.parse(cleaned) as ExtendedAllocationResult;
+
+  const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
+  if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
+
+  return result;
 }
 
 function buildBehaviorContext(flags: BehaviorFlags): string {
