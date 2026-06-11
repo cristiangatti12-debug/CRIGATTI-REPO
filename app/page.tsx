@@ -756,12 +756,16 @@ function AISuggestionsPanel({
 
 // ── NEWS CARD ─────────────────────────────────────────────────────────────────
 function NewsCard({
-  item, t, highlight = false,
+  item, t, highlight = false, sentiment, affectedTicker,
 }: {
-  item:      NewsItem;
-  t:         (en: string, it: string) => string;
-  highlight?: boolean;
+  item:            NewsItem;
+  t:               (en: string, it: string) => string;
+  highlight?:      boolean;
+  sentiment?:      "positive" | "negative" | "neutral";
+  affectedTicker?: string;
 }) {
+  const sentimentDot = sentiment === "positive" ? "🟢" : sentiment === "negative" ? "🔴" : "⚪";
+
   const card = (
     <div
       className="rounded-2xl p-4 transition-all active:scale-[0.99]"
@@ -772,6 +776,7 @@ function NewsCard({
     >
       {/* Meta */}
       <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+        {sentiment && <span className="text-xs flex-shrink-0">{sentimentDot}</span>}
         {item.tickers.slice(0, 3).map(ticker => (
           <span key={ticker}
             className="text-xs px-2 py-0.5 rounded-full font-medium"
@@ -790,6 +795,13 @@ function NewsCard({
       <p className="text-sm font-medium leading-snug text-white">
         {item.headline}
       </p>
+      {/* Affected ticker badge */}
+      {affectedTicker && (
+        <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-medium flex-shrink-0"
+          style={{ backgroundColor: "rgba(234,179,8,0.15)", color: "#EAB308" }}>
+          ⚠️ {t("Affects your", "Riguarda il tuo")} {affectedTicker}
+        </div>
+      )}
       {item.link && (
         <p className="text-xs mt-1.5" style={{ color: "#38BDF8" }}>
           {t("Read article →", "Leggi articolo →")}
@@ -818,11 +830,14 @@ export default function Home() {
   const [loadingDB,      setLoadingDB]      = useState(true);
   const [loadingPrices,  setLoadingPrices]  = useState(false);
   const [loadingChart,   setLoadingChart]   = useState(true);
-  const [news,           setNews]           = useState<{ holdings: NewsItem[]; market: NewsItem[] }>({ holdings: [], market: [] });
-  const [loadingNews,    setLoadingNews]    = useState(false);
-  const [newsUpdatedAt,  setNewsUpdatedAt]  = useState<Date | null>(null);
-  const [signals,        setSignals]        = useState<Record<string, TickerSignal>>({});
-  const [signalsLoading, setSignalsLoading] = useState(false);
+  const [news,              setNews]              = useState<{ holdings: NewsItem[]; market: NewsItem[] }>({ holdings: [], market: [] });
+  const [loadingNews,       setLoadingNews]       = useState(false);
+  const [newsUpdatedAt,     setNewsUpdatedAt]     = useState<Date | null>(null);
+  const [newsSentiment,     setNewsSentiment]     = useState<Record<string, { sentiment: string; affected?: string }>>({});
+  const [digest,            setDigest]            = useState<string | null>(null);
+  const [digestDismissed,   setDigestDismissed]   = useState(false);
+  const [signals,           setSignals]           = useState<Record<string, TickerSignal>>({});
+  const [signalsLoading,    setSignalsLoading]    = useState(false);
   const [marketSignals,  setMarketSignals]  = useState<MarketSignalsResponse | null>(null);
   const [marketLoading,  setMarketLoading]  = useState(false);
   const [showOnboarding,    setShowOnboarding]    = useState(false);
@@ -992,17 +1007,83 @@ export default function Home() {
   }
 
   // ── Fetch news ────────────────────────────────────────────────────────────
+  const fetchDigest = useCallback(async (hs: Holding[]) => {
+    try {
+      const today = new Date().toLocaleDateString("en-CA");
+      const cacheKey = `vela_digest_${today}`;
+
+      // Check localStorage
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        setDigest(cached);
+        setDigestDismissed(false);
+        return;
+      }
+
+      // Compute price changes (would need quotes data, using 0 as fallback)
+      const holdingsWithChanges = hs.map(h => ({
+        ...h,
+        change_pct: 0, // Would need real price data here
+      }));
+
+      const res = await fetch("/api/digest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          holdings: holdingsWithChanges,
+          signals,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setDigest(data.digest);
+      setDigestDismissed(false);
+      localStorage.setItem(cacheKey, data.digest);
+    } catch {
+      // Silently fail
+    }
+  }, [signals]);
+
   const fetchNews = useCallback(async (hs: Holding[]) => {
     setLoadingNews(true);
     try {
       const tickers = hs.map(h => h.ticker).join(",");
       const res  = await fetch(`/api/news?tickers=${tickers}&lang=${appLang}`);
       const data = await res.json();
-      setNews({
+      const newsData = {
         holdings: Array.isArray(data.holdings) ? data.holdings : [],
         market:   Array.isArray(data.market)   ? data.market   : [],
-      });
+      };
+      setNews(newsData);
       setNewsUpdatedAt(new Date());
+
+      // Fetch sentiment for news
+      const allNews = [...newsData.holdings, ...newsData.market];
+      if (allNews.length > 0) {
+        try {
+          const sentRes = await fetch("/api/news-sentiment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              headlines: allNews.map(n => ({ title: n.headline, tickers: n.tickers })),
+              held_tickers: hs.map(h => h.ticker),
+            }),
+          });
+          const sentiments = await sentRes.json();
+          const sentimentMap: Record<string, { sentiment: string; affected?: string }> = {};
+          sentiments.forEach((s: any) => {
+            if (allNews[s.index]) {
+              sentimentMap[allNews[s.index].headline] = {
+                sentiment: s.sentiment,
+                affected: s.affected_ticker,
+              };
+            }
+          });
+          setNewsSentiment(sentimentMap);
+        } catch {
+          setNewsSentiment({});
+        }
+      }
     } catch { setNews({ holdings: [], market: [] }); }
     setLoadingNews(false);
   }, [appLang]);
@@ -1125,6 +1206,12 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === "Analysis" || activeTab === "Community") fetchCommunityAnalyses();
   }, [activeTab, fetchCommunityAnalyses]);
+
+  useEffect(() => {
+    if (activeTab === "Portfolio" && holdings.length > 0 && !loadingDB) {
+      fetchDigest(holdings);
+    }
+  }, [activeTab, holdings, fetchDigest, loadingDB]);
 
   // ── Auto-refresh news every 5 minutes ────────────────────────────────────
   useEffect(() => {
@@ -1356,6 +1443,32 @@ export default function Home() {
       {/* ── PORTFOLIO ── */}
       {activeTab === "Portfolio" && (
         <div className="px-4 py-4 space-y-5">
+
+          {/* Daily Digest Card */}
+          {digest && !digestDismissed && (
+            <div className="rounded-2xl p-4"
+              style={{
+                backgroundColor: "rgba(14,165,233,0.10)",
+                border: "1px solid rgba(14,165,233,0.30)",
+              }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold mb-1 uppercase tracking-wider" style={{ color: "#38BDF8" }}>
+                    💡 {t("Today's Insight", "Insight di Oggi")}
+                  </p>
+                  <p className="text-sm leading-relaxed" style={{ color: "rgba(255,255,255,0.90)" }}>
+                    {digest}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setDigestDismissed(true)}
+                  className="flex-shrink-0 text-sm leading-none"
+                  style={{ color: "#64748B" }}>
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Summary cards */}
           <div className="flex gap-3 overflow-x-auto no-scrollbar pb-1">
@@ -1692,9 +1805,19 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {news.holdings.map((n, i) => (
-                    <NewsCard key={i} item={n} t={t} highlight />
-                  ))}
+                  {news.holdings.map((n, i) => {
+                    const sentData = newsSentiment[n.headline];
+                    return (
+                      <NewsCard
+                        key={i}
+                        item={n}
+                        t={t}
+                        highlight
+                        sentiment={sentData?.sentiment as any}
+                        affectedTicker={sentData?.affected}
+                      />
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1719,9 +1842,18 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {news.market.map((n, i) => (
-                    <NewsCard key={i} item={n} t={t} />
-                  ))}
+                  {news.market.map((n, i) => {
+                    const sentData = newsSentiment[n.headline];
+                    return (
+                      <NewsCard
+                        key={i}
+                        item={n}
+                        t={t}
+                        sentiment={sentData?.sentiment as any}
+                        affectedTicker={sentData?.affected}
+                      />
+                    );
+                  })}
                 </div>
               )}
             </div>

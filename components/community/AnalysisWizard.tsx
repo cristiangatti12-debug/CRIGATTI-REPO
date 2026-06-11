@@ -70,8 +70,10 @@ export default function AnalysisWizard({ onClose, onPublished, userId, displayNa
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Step 2
-  const [bullCase, setBullCase] = useState("");
-  const [risk,     setRisk]     = useState("");
+  const [bullCase,     setBullCase]     = useState("");
+  const [risk,         setRisk]         = useState("");
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftError,   setDraftError]   = useState("");
 
   // Step 3
   const [submitting, setSubmitting] = useState(false);
@@ -105,6 +107,32 @@ export default function AnalysisWizard({ onClose, onPublished, userId, displayNa
 
   const step1Ready = selected && sentiment && horizon && conviction;
   const step2Ready = bullCase.trim().length >= 30 && risk.trim().length >= 20;
+
+  async function handleDraft() {
+    if (!selected || !sentiment || !horizon) return;
+    setDraftLoading(true);
+    setDraftError("");
+    try {
+      const res = await fetch("/api/draft-analysis", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          ticker:       selected.symbol,
+          ticker_name:  selected.name,
+          sentiment,
+          horizon,
+          score:        50,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setBullCase(data.bull_case);
+      setRisk(data.risk);
+    } catch {
+      setDraftError("Could not generate draft. Please try again.");
+    }
+    setDraftLoading(false);
+  }
 
   async function handleSubmit() {
     if (!selected || !sentiment || !horizon || !conviction) return;
@@ -360,6 +388,28 @@ export default function AnalysisWizard({ onClose, onPublished, userId, displayNa
                   {risk.trim().length}/20 {t("min", "min")}
                 </p>
               </div>
+
+              {/* Draft error */}
+              {draftError && (
+                <div className="rounded-xl px-3 py-2 text-xs"
+                  style={{ backgroundColor: "rgba(239,68,68,0.10)", color: "#F87171" }}>
+                  {draftError}
+                </div>
+              )}
+
+              {/* Draft button */}
+              <button
+                onClick={handleDraft}
+                disabled={draftLoading || !selected || !sentiment || !horizon}
+                className="w-full py-2 rounded-xl text-xs font-semibold transition-opacity flex items-center justify-center gap-2"
+                style={{
+                  backgroundColor: "rgba(168,85,247,0.15)",
+                  color: "#D8B4FE",
+                  opacity: draftLoading || !selected || !sentiment || !horizon ? 0.5 : 1,
+                }}>
+                {draftLoading && <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />}
+                {t("✨ Draft with AI", "✨ Bozza con AI")}
+              </button>
 
               <div className="flex gap-3 mt-2">
                 <button

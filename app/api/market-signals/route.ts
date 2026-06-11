@@ -236,14 +236,11 @@ export async function GET(req: NextRequest) {
   const heldParam = new URL(req.url).searchParams.get("held") ?? "";
   const heldSet   = new Set(heldParam.split(",").map(t => t.trim().toUpperCase()).filter(Boolean));
 
-  // Date-seeded rotation: rotate top-6 BUY pool by 1 each day so different stocks surface
-  const dayIndex  = Math.floor(Date.now() / 86400000);
   const allBuys   = scored
     .filter(x => x.signal === "BUY" && !heldSet.has(x.ticker.toUpperCase()))
     .sort((a, b) => b.total - a.total)
     .slice(0, 6);
-  const rotOffset = allBuys.length > 0 ? dayIndex % Math.max(allBuys.length, 1) : 0;
-  const buysRaw   = [...allBuys.slice(rotOffset), ...allBuys.slice(0, rotOffset)].slice(0, 4);
+  const buysRaw   = allBuys.slice(0, 4);
 
   const sellsRaw = scored.filter(x => x.signal === "SELL").sort((a, b) => a.total - b.total).slice(0, 2);
 

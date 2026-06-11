@@ -41,6 +41,13 @@ export default function AllocationScreen({
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
+  // Rebalancing state
+  const [rebalanceOpen,     setRebalanceOpen]     = useState(false);
+  const [rebalanceCash,     setRebalanceCash]     = useState("500");
+  const [rebalanceLoading,  setRebalanceLoading]  = useState(false);
+  const [rebalanceError,    setRebalanceError]    = useState("");
+  const [rebalanceTrades,   setRebalanceTrades]   = useState<any[]>([]);
+
   const t = (en: string, it: string) => lang === "it" ? it : en;
 
   useEffect(() => { loadAllocation(); }, []);
@@ -125,6 +132,37 @@ export default function AllocationScreen({
     } catch (err) {
       console.error("saveAllocationHistory error:", err);
     }
+  }
+
+  async function handleGetRebalancingTrades() {
+    if (!result || !rebalanceCash) return;
+    setRebalanceLoading(true);
+    setRebalanceError("");
+    try {
+      const cashNum = parseFloat(rebalanceCash);
+      if (isNaN(cashNum) || cashNum <= 0) {
+        setRebalanceError(t("Please enter a valid amount", "Inserisci un importo valido"));
+        setRebalanceLoading(false);
+        return;
+      }
+
+      const res = await fetch("/api/rebalance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          holdings,
+          allocation_result: result,
+          available_cash_eur: cashNum,
+        }),
+      });
+
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setRebalanceTrades(data.trades || []);
+    } catch {
+      setRebalanceError(t("Could not generate trades", "Impossibile generare operazioni"));
+    }
+    setRebalanceLoading(false);
   }
 
   return (
@@ -275,6 +313,18 @@ export default function AllocationScreen({
               </div>
             </div>
 
+            {/* Rebalancing button */}
+            <button
+              onClick={() => setRebalanceOpen(true)}
+              className="w-full py-3 rounded-xl font-semibold text-sm transition-all"
+              style={{
+                backgroundColor: "rgba(168,85,247,0.15)",
+                color: "#D8B4FE",
+                border: "1px solid rgba(168,85,247,0.30)",
+              }}>
+              📋 {t("Get rebalancing trades", "Ottieni operazioni di ribilanciamento")}
+            </button>
+
             {/* Disclaimer */}
             <p className="text-xs text-center pb-4" style={{ color: "rgba(255,255,255,0.25)" }}>
               {t(
@@ -285,6 +335,142 @@ export default function AllocationScreen({
           </>
         )}
       </div>
+
+      {/* Rebalancing Modal */}
+      {rebalanceOpen && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+          onClick={() => setRebalanceOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-t-3xl shadow-2xl overflow-y-auto"
+            style={{
+              backgroundColor: "#0F1F35",
+              border: "1px solid rgba(255,255,255,0.12)",
+              maxHeight: "80vh",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 pt-6 pb-4 flex-shrink-0"
+              style={{ borderBottom: "1px solid rgba(255,255,255,0.10)" }}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-bold text-white">
+                  📋 {t("Rebalancing Plan", "Piano di Ribilanciamento")}
+                </h3>
+                <button onClick={() => setRebalanceOpen(false)} className="text-lg leading-none" style={{ color: "#64748B" }}>✕</button>
+              </div>
+              <p className="text-xs" style={{ color: "rgba(255,255,255,0.50)" }}>
+                {t("How much new cash would you like to invest?", "Quanto nuovo capitale vuoi investire?")}
+              </p>
+            </div>
+
+            {/* Content */}
+            <div className="px-5 py-4 space-y-4">
+              {/* Cash input */}
+              {rebalanceTrades.length === 0 && (
+                <>
+                  <div>
+                    <label className="text-xs font-medium block mb-1" style={{ color: "#64748B" }}>
+                      {t("Available cash (€)", "Liquidità disponibile (€)")}
+                    </label>
+                    <input
+                      type="number"
+                      value={rebalanceCash}
+                      onChange={e => setRebalanceCash(e.target.value)}
+                      className="w-full rounded-xl px-4 py-3 text-sm outline-none"
+                      style={{
+                        backgroundColor: "rgba(255,255,255,0.07)",
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        color: "white",
+                      }}
+                      placeholder="500"
+                      min="0"
+                      step="10"
+                    />
+                  </div>
+
+                  {rebalanceError && (
+                    <div className="rounded-xl px-4 py-2 text-xs"
+                      style={{ backgroundColor: "rgba(239,68,68,0.10)", color: "#F87171" }}>
+                      {rebalanceError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleGetRebalancingTrades}
+                    disabled={rebalanceLoading}
+                    className="w-full py-3 rounded-xl font-semibold text-sm transition-opacity"
+                    style={{
+                      backgroundColor: "#0EA5E9",
+                      color: "white",
+                      opacity: rebalanceLoading ? 0.5 : 1,
+                    }}>
+                    {rebalanceLoading ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                        {t("Generating…", "Generazione…")}
+                      </span>
+                    ) : (
+                      t("Generate trades →", "Genera operazioni →")
+                    )}
+                  </button>
+                </>
+              )}
+
+              {/* Trades list */}
+              {rebalanceTrades.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold" style={{ color: "#94A3B8" }}>
+                    {t("Recommended trades", "Operazioni consigliate")}
+                  </p>
+                  <div className="space-y-3">
+                    {rebalanceTrades.map((trade, i) => (
+                      <div key={i} className="rounded-xl p-3"
+                        style={{
+                          backgroundColor: "rgba(255,255,255,0.05)",
+                          border: "1px solid rgba(255,255,255,0.10)",
+                        }}>
+                        <div className="flex items-start justify-between mb-2">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                            style={{
+                              backgroundColor: trade.action === "BUY" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                              color: trade.action === "BUY" ? "#4ADE80" : "#F87171",
+                            }}>
+                            {trade.action}
+                          </span>
+                          <span className="text-sm font-bold text-white">€{trade.amount_eur.toFixed(0)}</span>
+                        </div>
+                        <p className="text-sm font-semibold text-white mb-1">{trade.instrument}</p>
+                        <p className="text-xs" style={{ color: "#94A3B8" }}>{trade.reason_short}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setRebalanceTrades([]);
+                      setRebalanceCash("500");
+                    }}
+                    className="w-full py-2 rounded-xl text-xs font-medium"
+                    style={{ backgroundColor: "rgba(255,255,255,0.07)", color: "#94A3B8" }}>
+                    {t("Back", "Indietro")}
+                  </button>
+                </>
+              )}
+
+              {/* Disclaimer */}
+              <p className="text-xs text-center pb-2" style={{ color: "rgba(255,255,255,0.25)" }}>
+                {t(
+                  "Not financial advice. For educational purposes only.",
+                  "Non è una consulenza finanziaria. Solo a scopo educativo."
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         @keyframes allocSlideUp {
