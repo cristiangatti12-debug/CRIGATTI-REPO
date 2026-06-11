@@ -177,6 +177,61 @@ export interface AllocationResult {
   actions:    string[];
 }
 
+// ── Sprint 10 Enhanced — Detailed Risk Questionnaire & History ────────────────
+
+export type RiskProfile = "Conservative" | "Balanced" | "Growth" | "Aggressive";
+
+export interface BehaviorFlags {
+  panicSelling:      boolean;
+  overconfidence:    boolean;
+  emotionalAdjuster: boolean;
+}
+
+export interface ExtendedRiskResult {
+  score:             number;
+  profile:           RiskProfile;
+  stocks:            number;
+  bonds:             number;
+  cash:              number;
+  subsectionScores: {
+    riskTolerance:       number;
+    financialFoundation: number;
+    experience:          number;
+    preferences:         number;
+  };
+  warnings:          string[];
+  behaviorFlags:     BehaviorFlags;
+}
+
+export interface AllocationHistoryRecord {
+  id:                  string;
+  user_id:            string;
+  created_at:         string;
+  risk_questionnaire: Record<string, any>;
+  risk_score:         number;
+  risk_profile:       RiskProfile;
+  ai_recommendation:  AllocationSlice[];
+  portfolio_snapshot: Record<string, number>;
+  user_adjustments?:  Record<string, number>;
+  market_context?:    Record<string, any>;
+}
+
+export interface AllocationPerformance {
+  id:                          string;
+  user_id:                     string;
+  allocation_history_id:       string;
+  created_at:                  string;
+  original_allocation_return_3m:  number | null;
+  portfolio_actual_return_3m:     number | null;
+  outperformance_3m:              number | null;
+  original_allocation_return_6m:  number | null;
+  portfolio_actual_return_6m:     number | null;
+  outperformance_6m:              number | null;
+  original_allocation_return_ytd: number | null;
+  portfolio_actual_return_ytd:    number | null;
+  outperformance_ytd:             number | null;
+}
+
 // ── Sprint 6 — Community Analysis ────────────────────────────────────────────
 
 export type Sentiment  = "bullish" | "neutral" | "bearish";

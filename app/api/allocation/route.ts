@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { AllocationResult } from "@/types";
+import { Anthropic } from "@anthropic-ai/sdk";
+import type { AllocationResult, BehaviorFlags } from "@/types";
 
 export const dynamic = "force-dynamic";
-
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 interface HoldingParam {
   ticker:         string;
@@ -13,16 +12,35 @@ interface HoldingParam {
   currency?:      string;
 }
 
+interface ExtendedAllocationResult extends AllocationResult {
+  confidence_score: number;
+  key_risks:        string[];
+  learning_notes:   string;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const profile = searchParams.get("profile") ?? "Balanced";
   const score   = parseInt(searchParams.get("score") ?? "12", 10);
-  const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim();
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY?.replace(/^﻿/, "").trim();
 
   let holdings: HoldingParam[] = [];
+  let fullQuestionnaire: Record<string, any> = {};
+  let behaviorFlags: BehaviorFlags = { panicSelling: false, overconfidence: false, emotionalAdjuster: false };
+
   try {
     const raw = searchParams.get("holdings");
     if (raw) holdings = JSON.parse(decodeURIComponent(raw));
+  } catch {}
+
+  try {
+    const raw = searchParams.get("full_questionnaire");
+    if (raw) fullQuestionnaire = JSON.parse(decodeURIComponent(raw));
+  } catch {}
+
+  try {
+    const raw = searchParams.get("behavioral_flags");
+    if (raw) behaviorFlags = JSON.parse(decodeURIComponent(raw));
   } catch {}
 
   const holdingsSummary = holdings.length > 0
@@ -34,66 +52,99 @@ export async function GET(req: NextRequest) {
 
   const totalValue = holdings.reduce((s, h) => s + h.shares * h.cost_per_share, 0);
 
-  if (!GROQ_KEY) return NextResponse.json(getFallbackAllocation(profile));
+  if (!ANTHROPIC_KEY) return NextResponse.json(getFallbackAllocation(profile));
+
+  const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
+
+  const behaviorContext = buildBehaviorContext(behaviorFlags);
+  const questionnaireSummary = buildQuestionnaireSummary(fullQuestionnaire);
 
   const prompt =
-    `You are a personal finance advisor for beginners. Be simple, clear, and encouraging.\n\n` +
-    `User risk profile: ${profile}\n` +
-    `Risk score: ${score}/25\n` +
-    `Current holdings:\n${holdingsSummary}\n` +
-    `Total portfolio value (approx): ${totalValue.toFixed(0)}\n\n` +
-    `Return ONLY a valid JSON object. No markdown. No explanation outside the JSON. No backticks.\n\n` +
+    `You are a specialized financial advisor and portfolio allocation expert. You have deep expertise in:\n` +
+    `- Modern portfolio theory and asset allocation\n` +
+    `- Behavioral finance and investor psychology\n` +
+    `- Risk management and diversification\n` +
+    `- European and global investment markets\n\n` +
+    `## User Profile\n` +
+    `Risk Category: ${profile} (score ${score}/25)\n` +
+    `${questionnaireSummary ? `Detailed Risk Assessment:\n${questionnaireSummary}\n` : ""}` +
+    `${behaviorContext ? `Behavioral Patterns:\n${behaviorContext}\n` : ""}` +
+    `\n## Current Holdings\n${holdingsSummary}\n` +
+    `Total Portfolio Value (approx): €${totalValue.toFixed(0)}\n\n` +
+    `## Your Task\n` +
+    `Based on the user's comprehensive risk profile, behavioral patterns, and current holdings, create a personalized portfolio allocation strategy.\n` +
+    `Consider:\n` +
+    `- Asset class diversification\n` +
+    `- Geographic diversification (Europe, global, emerging markets)\n` +
+    `- Behavioral coaching (e.g., if prone to panic selling, reduce volatility)\n` +
+    `- Tax efficiency in EU context\n` +
+    `- Real, investable instruments available in Europe\n\n` +
+    `Return ONLY valid JSON. No markdown, no code blocks, no explanation.\n\n` +
     `{\n` +
     `  "profile": "${profile}",\n` +
-    `  "summary": "One sentence in plain English, no jargon",\n` +
+    `  "summary": "One compelling sentence about this allocation strategy",\n` +
     `  "allocation": [\n` +
     `    {\n` +
     `      "asset_class": "Global ETFs",\n` +
     `      "target_pct": 50,\n` +
     `      "current_pct": 0,\n` +
-    `      "why": "One sentence max",\n` +
+    `      "why": "Reason for this allocation (1 sentence, max 20 words)",\n` +
     `      "example_instrument": "VWCE"\n` +
     `    }\n` +
     `  ],\n` +
-    `  "gap": "2 sentences max. Plain English, no jargon.",\n` +
-    `  "actions": ["Action 1", "Action 2", "Action 3"]\n` +
+    `  "gap": "2 sentences max. Explain gap between current and target allocation.",\n` +
+    `  "actions": ["Action 1: Specific step (under 15 words)", "Action 2", "Action 3"],\n` +
+    `  "confidence_score": 85,\n` +
+    `  "key_risks": ["Risk 1: Specific downside", "Risk 2"],\n` +
+    `  "learning_notes": "Observation for next time. E.g., user adjusted this asset class by +X% last time."\n` +
     `}\n\n` +
     `Rules:\n` +
-    `- allocation: 3 to 5 items, target_pct must sum to 100\n` +
-    `- current_pct = estimated % of current holdings in that asset class (0 if none)\n` +
-    `- actions: max 3 items, each under 15 words\n` +
-    `- example_instrument: real ticker or ETF available in Europe`;
+    `- allocation: 3–5 items, target_pct must sum to exactly 100\n` +
+    `- current_pct = estimated % of current holdings in that class (0 if none)\n` +
+    `- confidence_score: 0–100, how confident you are in this recommendation\n` +
+    `- key_risks: 1–3 specific risks (not generic market risk)\n` +
+    `- example_instrument: real ticker/ETF available in Europe\n` +
+    `- learning_notes: Actionable insight for refinement`;
 
   try {
-    const groqRes = await fetch(GROQ_API_URL, {
-      method:  "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": `Bearer ${GROQ_KEY}`,
-      },
-      body: JSON.stringify({
-        model:       "llama-3.3-70b-versatile",
-        max_tokens:  1000,
-        temperature: 0.4,
-        messages:    [{ role: "user", content: prompt }],
-      }),
+    const response = await client.messages.create({
+      model:       "claude-3-5-sonnet-20241022",
+      max_tokens:  1500,
+      temperature: 0.6,
+      messages:    [{ role: "user", content: prompt }],
     });
 
-    if (!groqRes.ok) throw new Error(`Groq ${groqRes.status}`);
-
-    const groqData = await groqRes.json();
-    const raw      = groqData.choices?.[0]?.message?.content ?? "";
-    const cleaned  = raw.replace(/```json|```/g, "").trim();
-    const result   = JSON.parse(cleaned) as AllocationResult;
+    const raw = response.content[0]?.type === "text" ? response.content[0].text : "";
+    const cleaned = raw.replace(/```json|```/g, "").trim();
+    const result = JSON.parse(cleaned) as ExtendedAllocationResult;
 
     // Sanity: allocation must sum to ~100
     const total = result.allocation?.reduce((s: number, sl: any) => s + (sl.target_pct ?? 0), 0) ?? 0;
-    if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation");
+    if (!result.allocation || total < 90 || total > 110) throw new Error("Invalid allocation sum");
 
     return NextResponse.json(result);
-  } catch {
+  } catch (error) {
+    console.error("[/api/allocation] Claude error:", error);
     return NextResponse.json(getFallbackAllocation(profile));
   }
+}
+
+function buildBehaviorContext(flags: BehaviorFlags): string {
+  const lines: string[] = [];
+  if (flags.panicSelling) lines.push("- History of panic selling during downturns → Recommend lower volatility and automatic rebalancing");
+  if (flags.overconfidence) lines.push("- Overestimation of personal stock-picking ability → Emphasize ETF core + limited individual stock allocation");
+  if (flags.emotionalAdjuster) lines.push("- Tendency to emotionally adjust portfolio → Suggest preset rebalancing schedule instead of frequent changes");
+  return lines.length > 0 ? lines.join("\n") : "";
+}
+
+function buildQuestionnaireSummary(q: Record<string, any>): string {
+  const parts: string[] = [];
+  if (q.investmentHorizon) parts.push(`Investment horizon: ${q.investmentHorizon}`);
+  if (q.incomeStability) parts.push(`Income stability: ${q.incomeStability}`);
+  if (q.emergencyFundMonths) parts.push(`Emergency fund: ${q.emergencyFundMonths} months`);
+  if (q.debtLevel) parts.push(`Debt load: ${q.debtLevel}`);
+  if (q.esgConcern) parts.push(`ESG priority: ${q.esgConcern}`);
+  return parts.join(" | ");
 }
 
 function getFallbackAllocation(profile: string): AllocationResult {
