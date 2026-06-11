@@ -235,12 +235,27 @@ export interface PERatioResult {
   pe:           number | null;
   fairPE:       number;
   sector:       string;
-  source:       "live-yf-quote" | "live-yf-summary" | "live-av" | "estimated" | "unavailable";
+  source:       "live-fmp" | "live-yf-quote" | "live-yf-summary" | "live-av" | "estimated" | "unavailable";
   peEstimated:  boolean;
 }
 
 function saneTrailingPE(v: unknown): number | null {
-  return typeof v === "number" && v > 0 && v < 300 ? v : null;
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  return typeof n === "number" && isFinite(n) && n > 0 && n < 300 ? n : null;
+}
+
+async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
+  const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
+  if (!FMP_KEY) return null;
+  try {
+    const url = `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`;
+    const res = await fetch(url, { next: { revalidate: 3600 } } as RequestInit);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const q = Array.isArray(json) && json.length > 0 ? json[0] : null;
+    if (!q) return null;
+    return saneTrailingPE(q.pe);
+  } catch { return null; }
 }
 
 async function fetchYFQuoteSummaryPE(ticker: string): Promise<number | null> {
@@ -292,14 +307,14 @@ async function fetchAlphaVantagePE(ticker: string): Promise<number | null> {
 
 /**
  * Resolve a trailing P/E for the given ticker, walking a fallback chain:
- *   1. EU/intl tickers → v7/quote (proven reliable from Vercel for EU)
- *   2. US tickers → v10/quoteSummary (proven reliable for US)
- *   3. US fallback → Alpha Vantage OVERVIEW (if AV_API_KEY set)
- *   4. Final fallback → hardcoded estimate (sector default / EU approx map)
+ *   1. FMP /api/v3/quote (US + EU, 250/day free tier) — primary live source
+ *   2. Yahoo v10 quoteSummary (US) or v7 quote (EU) — usually 401 from Vercel
+ *   3. Alpha Vantage OVERVIEW (US, 25/day free tier) — last live attempt
+ *   4. Hardcoded estimate (EU approx map / sector default) — peEstimated = true
  *
- * Always returns sector + fairPE so callers can render valuation context
- * even when only the estimate is available. ETFs and known passive vehicles
- * return { pe: null, source: "unavailable" } — the UI has the right copy.
+ * Logs a single console.warn per ticker when all live sources fail, so Vercel
+ * runtime logs surface upstream provider outages without dumping payloads.
+ * Always returns sector + fairPE. ETFs return { pe: null, source: "unavailable" }.
  */
 export async function getPERatio(ticker: string): Promise<PERatioResult> {
   const key      = baseTicker(ticker);
@@ -313,22 +328,25 @@ export async function getPERatio(ticker: string): Promise<PERatioResult> {
 
   const isInternational = EU_SUFFIX.test(ticker);
 
+  // 1. FMP — works for both US and EU, 10× the AV free-tier rate limit.
+  const fmpPE = await fetchFMPQuotePE(ticker);
+  if (fmpPE) return { pe: fmpPE, fairPE, sector, source: "live-fmp", peEstimated: false };
+
+  // 2. Yahoo Finance — usually 401 from Vercel IPs since late 2025 but cheap to try.
   if (isInternational) {
-    // EU/intl — v7/quote is reliable for EU symbols from Vercel, used today
-    // by /api/valuation EU path.
     const v7 = await fetchYFV7QuotePE(ticker);
     if (v7) return { pe: v7, fairPE, sector, source: "live-yf-quote", peEstimated: false };
   } else {
-    // US — v10 quoteSummary is reliable for US symbols from Vercel, used today
-    // by /api/valuation US path. Fall back to Alpha Vantage if quoteSummary
-    // returns nothing.
     const yfPE = await fetchYFQuoteSummaryPE(ticker);
     if (yfPE) return { pe: yfPE, fairPE, sector, source: "live-yf-summary", peEstimated: false };
+    // 3. Alpha Vantage — US-only, free tier is 25 calls/day.
     const avPE = await fetchAlphaVantagePE(ticker);
     if (avPE) return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false };
   }
 
-  // 3. Final fallback — hardcoded estimate (EU approx map first, then sector default).
+  // 4. Final fallback — hardcoded estimate (EU approx map first, then sector default).
+  // Single warn line so Vercel logs reveal which tickers couldn't get a live P/E.
+  console.warn(`[vela] getPERatio: no live P/E for ${ticker} — using estimate`);
   const euApprox = EU_APPROX_PE[key];
   const estimate = euApprox && euApprox > 0 ? euApprox : fairPE;
   if (estimate > 0) {
