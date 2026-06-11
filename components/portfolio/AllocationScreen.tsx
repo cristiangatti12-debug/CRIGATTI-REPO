@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-import type { AllocationResult, AllocationSlice } from "@/types";
+import { supabase } from "@/lib/supabase";
+import type { AllocationResult, AllocationSlice, BehaviorFlags } from "@/types";
 
 interface HoldingSlim {
   ticker:         string;
@@ -12,18 +13,23 @@ interface HoldingSlim {
 }
 
 interface Props {
-  onClose:  () => void;
-  lang:     "en" | "it";
-  profile:  string;
-  score:    number;
-  holdings: HoldingSlim[];
+  onClose:             () => void;
+  lang:                "en" | "it";
+  profile:             string;
+  score:               number;
+  holdings:            HoldingSlim[];
+  full_questionnaire?: Record<string, any>;
+  behavioral_flags?:   BehaviorFlags;
+  risk_profile?:       string;
 }
 
 const COLORS    = ["#38BDF8", "#818CF8", "#34D399", "#FBBF24", "#F87171"];
 const CACHE_KEY = "vela_allocation_v1";
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
-export default function AllocationScreen({ onClose, lang, profile, score, holdings }: Props) {
+export default function AllocationScreen({
+  onClose, lang, profile, score, holdings, full_questionnaire, behavioral_flags, risk_profile
+}: Props) {
   const [result,  setResult]  = useState<AllocationResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
@@ -51,16 +57,64 @@ export default function AllocationScreen({ onClose, lang, profile, score, holdin
       const holdingsParam = encodeURIComponent(JSON.stringify(
         holdings.map(h => ({ ticker: h.ticker, name: h.name, shares: h.shares, cost_per_share: h.cost_per_share, currency: h.currency }))
       ));
-      const url = `/api/allocation?profile=${encodeURIComponent(profile)}&score=${score}&holdings=${holdingsParam}`;
+
+      // Build API URL with questionnaire data
+      let url = `/api/allocation?profile=${encodeURIComponent(profile)}&score=${score}&holdings=${holdingsParam}`;
+      if (full_questionnaire) {
+        url += `&full_questionnaire=${encodeURIComponent(JSON.stringify(full_questionnaire))}`;
+      }
+      if (behavioral_flags) {
+        url += `&behavioral_flags=${encodeURIComponent(JSON.stringify(behavioral_flags))}`;
+      }
+
       const res = await fetch(url);
       if (!res.ok) throw new Error();
       const data: AllocationResult = await res.json();
       setResult(data);
       localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-    } catch {
+
+      // Auto-save to allocation_history
+      await saveAllocationHistory(data);
+    } catch (err) {
+      console.error("Allocation load error:", err);
       setError(t("Could not load your plan. Please try again.", "Impossibile caricare il piano. Riprova."));
     }
     setLoading(false);
+  }
+
+  async function saveAllocationHistory(allocationData: AllocationResult) {
+    try {
+      const { data } = await supabase.auth.getUser();
+      if (!data.user) return;
+
+      // Get current market context (VIX, date, etc.)
+      const marketContext = {
+        timestamp: new Date().toISOString(),
+        date: new Date().toLocaleDateString("en-CA"),
+      };
+
+      // Compute portfolio snapshot (% per asset class)
+      const portfolioSnapshot: Record<string, number> = {};
+      holdings.forEach(h => {
+        const value = h.shares * h.cost_per_share;
+        portfolioSnapshot[h.ticker] = value;
+      });
+
+      // Insert into allocation_history table
+      const { error } = await supabase.from("allocation_history").insert({
+        user_id: data.user.id,
+        risk_questionnaire: full_questionnaire || {},
+        risk_score: score,
+        risk_profile: risk_profile || profile,
+        ai_recommendation: allocationData.allocation,
+        portfolio_snapshot: portfolioSnapshot,
+        market_context: marketContext,
+      });
+
+      if (error) console.error("Error saving allocation history:", error);
+    } catch (err) {
+      console.error("saveAllocationHistory error:", err);
+    }
   }
 
   return (

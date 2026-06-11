@@ -404,13 +404,14 @@ interface Props {
 export default function RiskModal({ lang, onClose, onSave, holdings = [] }: Props) {
   const t = (en: string, it: string) => lang === "it" ? it : en;
 
-  const [step,           setStep]           = useState<"intro" | "quiz" | "result">("intro");
-  const [current,        setCurrent]        = useState(0);
-  const [answers,        setAnswers]        = useState<number[]>([]);
-  const [result,         setResult]         = useState<RiskResult | null>(null);
-  const [extendedResult, setExtendedResult] = useState<ExtendedRiskResult | null>(null);
-  const [saving,         setSaving]         = useState(false);
-  const [showAllocation, setShowAllocation] = useState(false);
+  const [step,                setStep]                = useState<"intro" | "quiz" | "result">("intro");
+  const [current,             setCurrent]             = useState(0);
+  const [answers,             setAnswers]             = useState<number[]>([]);
+  const [result,              setResult]              = useState<RiskResult | null>(null);
+  const [extendedResult,      setExtendedResult]      = useState<ExtendedRiskResult | null>(null);
+  const [fullQuestionnaire,   setFullQuestionnaire]   = useState<Record<string, any> | null>(null);
+  const [saving,              setSaving]              = useState(false);
+  const [showAllocation,      setShowAllocation]      = useState(false);
 
   const total    = QUESTIONS.length;
   const progress = current / total;
@@ -451,17 +452,18 @@ export default function RiskModal({ lang, onClose, onSave, holdings = [] }: Prop
       const { data } = await supabase.auth.getUser();
       if (data.user) {
         // Build questionnaire JSON from answers
-        const fullQuestionnaire: Record<string, any> = {};
-        QUESTIONS.forEach((q, idx) => {
-          fullQuestionnaire[q.id] = q.options[answerList[idx]];
+        const q: Record<string, any> = {};
+        QUESTIONS.forEach((question, idx) => {
+          q[question.id] = q.options[answerList[idx]];
         });
+        setFullQuestionnaire(q);
 
         await supabase.from("profiles").upsert(
           {
             id: data.user.id,
             risk_profile: res.profile,
             risk_score: res.score,
-            full_questionnaire: fullQuestionnaire,
+            full_questionnaire: q,
             questionnaire_version: 2,
             updated_at: new Date().toISOString(),
           },
@@ -721,13 +723,16 @@ export default function RiskModal({ lang, onClose, onSave, holdings = [] }: Prop
         })()}
       </div>
 
-      {showAllocation && result && (
+      {showAllocation && result && extendedResult && (
         <AllocationScreen
           onClose={() => setShowAllocation(false)}
           lang={lang}
           profile={result.profile}
           score={result.score}
           holdings={holdings}
+          full_questionnaire={fullQuestionnaire || undefined}
+          behavioral_flags={extendedResult.behaviorFlags}
+          risk_profile={result.profile}
         />
       )}
     </div>
