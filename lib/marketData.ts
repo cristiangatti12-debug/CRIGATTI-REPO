@@ -247,14 +247,26 @@ function saneTrailingPE(v: unknown): number | null {
 async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
   const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
   if (!FMP_KEY) return null;
+  // Primary: /api/v3/quote returns pe inline for most tickers in one call.
   try {
     const url = `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`;
     const res = await fetch(url, { next: { revalidate: 3600 } } as RequestInit);
+    if (res.ok) {
+      const json = await res.json();
+      const q = Array.isArray(json) && json.length > 0 ? json[0] : null;
+      const pe = saneTrailingPE(q?.pe);
+      if (pe) return pe;
+    }
+  } catch { /* fall through to key-metrics */ }
+  // Secondary: /stable/key-metrics-ttm exposes peRatioTTM even when /quote
+  // returns a stale or null pe (common for non-AAPL US tickers on free tier).
+  try {
+    const url = `https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
+    const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
     if (!res.ok) return null;
     const json = await res.json();
-    const q = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    if (!q) return null;
-    return saneTrailingPE(q.pe);
+    const m = Array.isArray(json) && json.length > 0 ? json[0] : null;
+    return saneTrailingPE(m?.peRatioTTM ?? m?.peRatio);
   } catch { return null; }
 }
 
