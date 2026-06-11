@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { getBaseUrl } from "@/lib/getBaseUrl";
 import VelaLogo from "@/components/ui/VelaLogo";
 
 type Mode = "login" | "signup";
@@ -80,7 +81,7 @@ export default function LoginPage() {
           password: pass,
           options: {
             data: { display_name: name || email.split("@")[0] },
-            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            emailRedirectTo: `${getBaseUrl()}/auth/callback`,
           },
         });
         if (signUpErr) throw signUpErr;

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Cap function runtime well under Vercel's per-request limit so a slow
+// upstream (Groq or Yahoo) doesn't let the connection hang to the point where
+// the browser shows "page can't be loaded" after the user adds their first
+// holding (which triggers this fetch via the parent onSave).
+export const maxDuration = 30;
+
 // ── Sector fair P/E map ────────────────────────────────────────────────────────
 const FAIR_PE: Record<string, number> = {
   "Technology":             28,
@@ -197,6 +203,10 @@ async function batchReason(
     (lang === "it" ? "Respond in Italian.\n" : "") +
     `Respond ONLY with valid JSON: { "TICKER": "sentence", ... }`;
 
+  // 12 s ceiling — Groq is usually < 2 s but has occasional long tails that
+  // would otherwise stall the whole signals response.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method:  "POST",
@@ -208,82 +218,95 @@ async function batchReason(
         temperature:     0.3,
         response_format: { type: "json_object" },
       }),
+      signal: controller.signal,
     });
     const data    = await res.json();
     const content = data.choices?.[0]?.message?.content ?? "{}";
     return JSON.parse(content);
   } catch { return {}; }
+  finally { clearTimeout(timeout); }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const tickersParam = searchParams.get("tickers") ?? "";
-  const costsParam   = searchParams.get("costs")   ?? "";
-  const lang         = searchParams.get("lang")    ?? "en";
+  // Top-level try/catch ensures the route always returns 200 with usable JSON
+  // (degraded if necessary). A 5xx here cascades into the browser showing
+  // "page can't be loaded" because the client component triggers this fetch
+  // immediately after the user adds their first holding.
+  try {
+    const { searchParams } = new URL(req.url);
+    const tickersParam = searchParams.get("tickers") ?? "";
+    const costsParam   = searchParams.get("costs")   ?? "";
+    const lang         = searchParams.get("lang")    ?? "en";
 
-  const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim();
-  if (!GROQ_KEY) return NextResponse.json({ error: "No key" }, { status: 500 });
+    const tickers = tickersParam.split(",").filter(Boolean);
+    const costs   = costsParam.split(",").map(Number);
+    if (tickers.length === 0) return NextResponse.json([]);
 
-  const tickers = tickersParam.split(",").filter(Boolean);
-  const costs   = costsParam.split(",").map(Number);
-  if (tickers.length === 0) return NextResponse.json([]);
+    // Missing Groq key is non-fatal — return scored signals without reasoning.
+    const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim() ?? "";
 
-  // 1 — Fetch price + 52-week range in parallel (v8/chart range=2d — same as /api/prices)
-  const [tickerData, analysts] = await Promise.all([
-    Promise.all(tickers.map(t => fetchTickerData(t))),
-    Promise.all(tickers.map(t => fetchAnalyst(t))),
-  ]);
+    // 1 — Fetch price + 52-week range in parallel (v8/chart range=2d — same as /api/prices)
+    const [tickerData, analysts] = await Promise.all([
+      Promise.all(tickers.map(t => fetchTickerData(t))),
+      Promise.all(tickers.map(t => fetchAnalyst(t))),
+    ]);
 
-  // 2 — Score using 52-week range proxy
-  const computed = tickers.map((ticker, i) => {
-    const td     = tickerData[i];
-    const peMeta = getPEMeta(ticker);
-    const result = td ? calcScore(td.price, td.high52, td.low52) : null;
-    return { ticker, result, ...peMeta };
-  });
+    // 2 — Score using 52-week range proxy
+    const computed = tickers.map((ticker, i) => {
+      const td     = tickerData[i];
+      const peMeta = getPEMeta(ticker);
+      const result = td ? calcScore(td.price, td.high52, td.low52) : null;
+      return { ticker, result, ...peMeta };
+    });
 
-  // 3 — Groq reasoning
-  const groqInputs = computed
-    .map((c, i) => c.result ? {
-      ticker:       c.ticker,
-      score:        c.result.total,
-      signal:       c.result.signal,
-      analystLabel: analysts[i]?.label ?? "N/A",
-      mom3m:        c.result.mom3m,
-      pctDiff:      c.result.pctDiff,
-      pe:           c.pe,
-      fairPE:       c.fairPE,
-    } : null)
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+    // 3 — Groq reasoning (skipped when key missing or call fails)
+    const groqInputs = computed
+      .map((c, i) => c.result ? {
+        ticker:       c.ticker,
+        score:        c.result.total,
+        signal:       c.result.signal,
+        analystLabel: analysts[i]?.label ?? "N/A",
+        mom3m:        c.result.mom3m,
+        pctDiff:      c.result.pctDiff,
+        pe:           c.pe,
+        fairPE:       c.fairPE,
+      } : null)
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
-  const reasonings = await batchReason(groqInputs, lang, GROQ_KEY);
+    const reasonings = GROQ_KEY
+      ? await batchReason(groqInputs, lang, GROQ_KEY)
+      : {};
 
-  // 4 — Response
-  return NextResponse.json(
-    tickers.map((ticker, i) => {
-      const c = computed[i];
-      return {
-        ticker,
-        score:   c.result?.total  ?? null,
-        signal:  c.result?.signal ?? "HOLD",
-        factors: c.result ? {
-          trend:    c.result.trend,
-          value:    c.result.value,
-          momentum: c.result.momentum,
-        } : null,
-        meta: c.result ? {
-          ma200Diff:   c.result.pctDiff,
-          mom3m:       c.result.mom3m,
-          pe:          c.pe,
-          fairPE:      c.fairPE,
-          sector:      c.sector,
-          peEstimated: c.peEstimated,
-        } : null,
-        analyst:   analysts[i] ?? null,
-        reasoning: reasonings[ticker] ?? null,
-        backtest:  null,
-      };
-    })
-  );
+    // 4 — Response
+    return NextResponse.json(
+      tickers.map((ticker, i) => {
+        const c = computed[i];
+        return {
+          ticker,
+          score:   c.result?.total  ?? null,
+          signal:  c.result?.signal ?? "HOLD",
+          factors: c.result ? {
+            trend:    c.result.trend,
+            value:    c.result.value,
+            momentum: c.result.momentum,
+          } : null,
+          meta: c.result ? {
+            ma200Diff:   c.result.pctDiff,
+            mom3m:       c.result.mom3m,
+            pe:          c.pe,
+            fairPE:      c.fairPE,
+            sector:      c.sector,
+            peEstimated: c.peEstimated,
+          } : null,
+          analyst:   analysts[i] ?? null,
+          reasoning: reasonings[ticker] ?? null,
+          backtest:  null,
+        };
+      })
+    );
+  } catch (err) {
+    console.error("[vela] /api/signals fatal error:", err);
+    return NextResponse.json([]);
+  }
 }

@@ -540,12 +540,12 @@ function HoldingSignalRow({
 function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: string, it: string) => string }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const isBuy    = stock.signal === "BUY";
+  const style    = SIGNAL_STYLE[stock.signal];
   const flag     = stock.region === "US" ? "🇺🇸" : "🇪🇺";
   const scoreBar = Math.round((stock.score / 100) * 100);
-  const barColor = isBuy ? "#22C55E" : "#EF4444";
-  const badgeBg  = isBuy ? "#DCFCE7" : "#FEE2E2";
-  const badgeClr = isBuy ? "#16A34A" : "#DC2626";
+  const barColor = stock.signal === "BUY" ? "#22C55E" : stock.signal === "HOLD" ? "#EAB308" : "#EF4444";
+  const badgeBg  = style.bg;
+  const badgeClr = style.color;
   const displayTicker = stock.ticker.replace(/\.(AS|DE|PA|L|SW|CO|MI)$/, "");
 
   return (
@@ -553,7 +553,7 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
       <div className="rounded-2xl px-4 py-3"
         style={{
           backgroundColor: "rgba(255,255,255,0.06)",
-          border: `1px solid ${isBuy ? "rgba(74,222,128,0.25)" : "rgba(248,113,113,0.25)"}`,
+          border: stock.signal === "BUY" ? "1px solid rgba(34,197,94,0.25)" : stock.signal === "HOLD" ? "1px solid rgba(234,179,8,0.25)" : "1px solid rgba(248,113,113,0.25)",
         }}>
         {/* Top row */}
         <div className="flex items-center justify-between mb-2">
@@ -608,12 +608,14 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
         {/* One-sentence verdict */}
         <div className="rounded-xl px-4 py-3"
           style={{
-            backgroundColor: isBuy ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
-            border: `1px solid ${isBuy ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`,
+            backgroundColor: stock.signal === "BUY" ? "rgba(34,197,94,0.08)" : stock.signal === "HOLD" ? "rgba(234,179,8,0.08)" : "rgba(239,68,68,0.08)",
+            border: stock.signal === "BUY" ? "1px solid rgba(34,197,94,0.2)" : stock.signal === "HOLD" ? "1px solid rgba(234,179,8,0.2)" : "1px solid rgba(239,68,68,0.2)",
           }}>
-          <p className="text-xs leading-relaxed" style={{ color: isBuy ? "#4ADE80" : "#F87171" }}>
-            {isBuy
+          <p className="text-xs leading-relaxed" style={{ color: stock.signal === "BUY" ? "#4ADE80" : stock.signal === "HOLD" ? "#EAB308" : "#F87171" }}>
+            {stock.signal === "BUY"
               ? t("✅ This stock ranks among the best opportunities on the market today — all three signals point up.", "✅ Questo titolo è tra le migliori opportunità di mercato oggi — tutti e tre i segnali sono positivi.")
+              : stock.signal === "HOLD"
+              ? t("⏸️ Hold your current position. Mixed signals suggest waiting for a better opportunity.", "⏸️ Mantieni la posizione attuale. Segnali misti suggeriscono di aspettare un'opportunità migliore.")
               : t("⚠️ This stock shows weak fundamentals — trend, valuation or momentum are unfavourable.", "⚠️ Questo titolo mostra fondamentali deboli — trend, valutazione o momentum sono sfavorevoli.")}
           </p>
         </div>
@@ -1035,7 +1037,17 @@ export default function Home() {
     (async () => {
       const { data } = await supabase.auth.getUser();
       const u = data.user;
-      if (!u) return;
+      if (!u) {
+        // Belt-and-braces: proxy.ts already redirects unauthenticated requests
+        // to /login. If we still hit this branch it usually means the browser
+        // cookie wasn't readable (Safari ITP, third-party cookie blocker,
+        // or a write race after signInWithPassword). Send the user to /login
+        // with a clear path back to recovery instead of silently rendering
+        // an empty dashboard.
+        console.warn("[vela] auth.getUser returned null at home mount — redirecting to /login");
+        window.location.href = "/login";
+        return;
+      }
       setUserId(u.id);
       setUserEmail(u.email ?? "");
       setJoinDate(u.created_at ?? "");
@@ -1045,15 +1057,20 @@ export default function Home() {
         ?? "";
       setDisplayName(name);
 
-      // Sync lang from Supabase profile (cross-device support)
+      // Sync lang from Supabase profile (cross-device support).
+      // Only reload if the stored lang is a valid value AND differs from
+      // what's currently active — guards against reload loops on a new
+      // profile row where lang is null/empty.
       try {
         const { data: profile } = await supabase
           .from("profiles")
           .select("lang")
           .eq("id", u.id)
           .single();
-        if (profile?.lang && profile.lang !== getLang()) {
-          setLang(profile.lang as Lang);
+        const remoteLang = profile?.lang;
+        const isValidLang = remoteLang === "en" || remoteLang === "it";
+        if (isValidLang && remoteLang !== getLang()) {
+          setLang(remoteLang as Lang);
           window.location.reload();
         }
       } catch {}
