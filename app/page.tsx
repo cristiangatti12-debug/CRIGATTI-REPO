@@ -965,7 +965,7 @@ export default function Home() {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 12 * 60 * 60 * 1000) {
+        if (Date.now() - ts < 24 * 60 * 60 * 1000) {
           setMarketSignals(data as MarketSignalsResponse);
           return;
         }
@@ -979,10 +979,7 @@ export default function Home() {
       const data = await res.json() as MarketSignalsResponse;
       if (data.buys && data.sells) {
         setMarketSignals(data);
-        // Only cache when we have real signals — don't cache empty YF failure responses
-        if (data.buys.length > 0 || data.sells.length > 0) {
-          localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
-        }
+        localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
       }
     } catch {}
     setMarketLoading(false);

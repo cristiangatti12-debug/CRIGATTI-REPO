@@ -236,19 +236,17 @@ export async function GET(req: NextRequest) {
   const heldParam = new URL(req.url).searchParams.get("held") ?? "";
   const heldSet   = new Set(heldParam.split(",").map(t => t.trim().toUpperCase()).filter(Boolean));
 
-  const allBuys   = scored
+  // Top 2 strongest BUY signals (by score)
+  const buysRaw = scored
     .filter(x => x.signal === "BUY" && !heldSet.has(x.ticker.toUpperCase()))
     .sort((a, b) => b.total - a.total)
-    .slice(0, 6);
-  const buysRaw   = allBuys.slice(0, 4);
+    .slice(0, 2);
 
-  const sellsRaw = scored.filter(x => x.signal === "SELL").sort((a, b) => a.total - b.total).slice(0, 2);
-
-  // HOLD fallback if not enough BUY / SELL signals
-  const holdsAsc  = scored.filter(x => x.signal === "HOLD" && !heldSet.has(x.ticker.toUpperCase())).sort((a, b) => a.total - b.total);
-  const holdsDesc = [...holdsAsc].reverse();
-  while (buysRaw.length  < 4 && holdsDesc.length) buysRaw.push(holdsDesc.shift()!);
-  while (sellsRaw.length < 2 && holdsAsc.length)  sellsRaw.push(holdsAsc.shift()!);
+  // Top 2 strongest SELL signals (by score, descending)
+  const sellsRaw = scored
+    .filter(x => x.signal === "SELL")
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 2);
 
   // Groq reasoning for all shown stocks (up to 6)
   const top6 = [...buysRaw, ...sellsRaw];
