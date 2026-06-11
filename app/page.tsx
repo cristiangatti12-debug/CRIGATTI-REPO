@@ -960,7 +960,7 @@ export default function Home() {
   // ── Fetch market-wide signals (S&P 500 + STOXX 600, 12h localStorage cache)
   const fetchMarketSignals = useCallback(async () => {
     const heldStr  = holdings.map(h => h.ticker.toUpperCase()).sort().join(",");
-    const cacheKey = `vela_market_v6_${appLang}_${heldStr}`;
+    const cacheKey = `vela_market_v7_${appLang}_${heldStr}`;
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
