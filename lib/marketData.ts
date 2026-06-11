@@ -1,12 +1,21 @@
 // Centralized Yahoo Finance data layer.
 // All routes must import from here — no direct Yahoo fetch calls in routes.
 
+import { baseTicker, EU_APPROX_PE, resolveFairPE, resolveSector } from "./peMaps";
+
 const YF_HEADERS = {
   "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Accept":          "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
   "Referer":         "https://finance.yahoo.com/",
+  "Origin":          "https://finance.yahoo.com",
 };
+
+const EU_SUFFIX = /\.[A-Z]{1,2}$/;
+const ETF_TICKERS = new Set([
+  "SPY","QQQ","IWM","VTI","VWCE","IWDA","CSPX","EEM","GLD","TLT","VOO","VUG",
+  "VTV","VEA","VWO","BND","AGG","SCHD","JEPI","JEPQ","DIA","XLK","XLF","XLE",
+]);
 
 const PERIOD_MAP: Record<string, string> = {
   "1W": "5d",
@@ -214,4 +223,118 @@ function exchangeScore(q: any): number {
   if (["NMS", "NYQ", "NGM", "NCM", "ASE"].includes(exch)) return 3;
   if (PRIMARY_SUFFIXES.has("." + sym.split(".").slice(-1)[0]?.toUpperCase())) return 2;
   return 1;
+}
+
+// ── Unified P/E sourcing ──────────────────────────────────────────────────────
+// Single helper consumed by /api/signals, /api/market-signals, and /api/valuation
+// so live P/E reaches every surface that renders it. Walks a fallback chain
+// and stops at the first sane value (>0 and <300). Always returns a meta block
+// (fairPE + sector) so callers don't need to re-derive it.
+
+export interface PERatioResult {
+  pe:           number | null;
+  fairPE:       number;
+  sector:       string;
+  source:       "live-yf-quote" | "live-yf-summary" | "live-av" | "estimated" | "unavailable";
+  peEstimated:  boolean;
+}
+
+function saneTrailingPE(v: unknown): number | null {
+  return typeof v === "number" && v > 0 && v < 300 ? v : null;
+}
+
+async function fetchYFQuoteSummaryPE(ticker: string): Promise<number | null> {
+  for (const host of ["query2", "query1"]) {
+    try {
+      const url = `https://${host}.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=summaryDetail&formatted=false`;
+      const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 3600 } } as RequestInit);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const sd   = json?.quoteSummary?.result?.[0]?.summaryDetail;
+      if (!sd) continue;
+      const trailing = saneTrailingPE(sd.trailingPE?.raw ?? sd.trailingPE);
+      if (trailing) return trailing;
+      const forward = saneTrailingPE(sd.forwardPE?.raw ?? sd.forwardPE);
+      if (forward) return forward;
+    } catch { continue; }
+  }
+  return null;
+}
+
+async function fetchYFV7QuotePE(ticker: string): Promise<number | null> {
+  try {
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}`;
+    const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 3600 } } as RequestInit);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const q = json?.quoteResponse?.result?.[0];
+    if (!q) return null;
+    const trailing = saneTrailingPE(q.trailingPE);
+    if (trailing) return trailing;
+    const forward = saneTrailingPE(q.forwardPE);
+    return forward;
+  } catch { return null; }
+}
+
+async function fetchAlphaVantagePE(ticker: string): Promise<number | null> {
+  const AV_KEY = (process.env.AV_API_KEY ?? "").trim();
+  if (!AV_KEY) return null;
+  try {
+    const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${AV_KEY}`;
+    const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.Note || json?.Information) return null;     // rate-limited
+    const trailing = parseFloat(json?.TrailingPE ?? "");
+    return saneTrailingPE(trailing);
+  } catch { return null; }
+}
+
+/**
+ * Resolve a trailing P/E for the given ticker, walking a fallback chain:
+ *   1. EU/intl tickers → v7/quote (proven reliable from Vercel for EU)
+ *   2. US tickers → v10/quoteSummary (proven reliable for US)
+ *   3. US fallback → Alpha Vantage OVERVIEW (if AV_API_KEY set)
+ *   4. Final fallback → hardcoded estimate (sector default / EU approx map)
+ *
+ * Always returns sector + fairPE so callers can render valuation context
+ * even when only the estimate is available. ETFs and known passive vehicles
+ * return { pe: null, source: "unavailable" } — the UI has the right copy.
+ */
+export async function getPERatio(ticker: string): Promise<PERatioResult> {
+  const key      = baseTicker(ticker);
+  const sector   = resolveSector(ticker);
+  const fairPE   = resolveFairPE(ticker, sector);
+
+  // ETFs / passive vehicles don't have a meaningful P/E.
+  if (ETF_TICKERS.has(key)) {
+    return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false };
+  }
+
+  const isInternational = EU_SUFFIX.test(ticker);
+
+  if (isInternational) {
+    // EU/intl — v7/quote is reliable for EU symbols from Vercel, used today
+    // by /api/valuation EU path.
+    const v7 = await fetchYFV7QuotePE(ticker);
+    if (v7) return { pe: v7, fairPE, sector, source: "live-yf-quote", peEstimated: false };
+  } else {
+    // US — v10 quoteSummary is reliable for US symbols from Vercel, used today
+    // by /api/valuation US path. Fall back to Alpha Vantage if quoteSummary
+    // returns nothing.
+    const yfPE = await fetchYFQuoteSummaryPE(ticker);
+    if (yfPE) return { pe: yfPE, fairPE, sector, source: "live-yf-summary", peEstimated: false };
+    const avPE = await fetchAlphaVantagePE(ticker);
+    if (avPE) return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false };
+  }
+
+  // 3. Final fallback — hardcoded estimate (EU approx map first, then sector default).
+  const euApprox = EU_APPROX_PE[key];
+  const estimate = euApprox && euApprox > 0 ? euApprox : fairPE;
+  if (estimate > 0) {
+    return { pe: estimate, fairPE, sector, source: "estimated", peEstimated: true };
+  }
+
+  // 4. No estimate available (e.g. ETF without entry in ETF_TICKERS, sector unknown).
+  return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false };
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getPERatio } from "@/lib/marketData";
 
 // Cap function runtime well under Vercel's per-request limit so a slow
 // upstream (Groq or Yahoo) doesn't let the connection hang to the point where
@@ -6,92 +7,33 @@ import { NextRequest, NextResponse } from "next/server";
 // holding (which triggers this fetch via the parent onSave).
 export const maxDuration = 30;
 
-// ── Sector fair P/E map ────────────────────────────────────────────────────────
-const FAIR_PE: Record<string, number> = {
-  "Technology":             28,
-  "Healthcare":             22,
-  "Consumer Cyclical":      20,
-  "Consumer Defensive":     18,
-  "Financial Services":     14,
-  "Energy":                 12,
-  "Utilities":              16,
-  "Basic Materials":        15,
-  "Industrials":            18,
-  "Real Estate":            20,
-  "Communication Services": 22,
-};
-const DEFAULT_FAIR_PE = 18;
-
-// Hardcoded ticker → fair P/E for the most common holdings
-const TICKER_FAIR_PE: Record<string, number> = {
-  AAPL:28, MSFT:28, NVDA:35, GOOGL:25, GOOG:25, META:22, AMZN:35, TSLA:45,
-  NFLX:25, AMD:30, INTC:15, ORCL:22, CRM:30, ADBE:28, QCOM:18, TXN:20,
-  AVGO:22, ASML:30, SAP:22, INTU:35,
-  JNJ:18, PFE:12, UNH:22, ABBV:16, MRK:18, LLY:35, BMY:12, AMGN:18, GILD:12,
-  JPM:14, BAC:12, WFC:12, GS:14, MS:14, V:28, MA:28, AXP:20, BLK:20,
-  WMT:26, COST:38, HD:22, NKE:28, MCD:24, SBUX:22, KO:24, PEP:24, PG:24,
-  XOM:12, CVX:12, COP:12, SLB:16, BP:10, SHEL:10, TTE:10,
-  BA:30, GE:20, CAT:18, MMM:15, HON:22, RTX:20, LMT:17,
-  DIS:25, CMCSA:14, T:10, VZ:10,
-  SPY:0, QQQ:0, IWM:0, VTI:0, VWCE:0, IWDA:0, CSPX:0, EEM:0, GLD:0, TLT:0,
-  // European stocks (base ticker without exchange suffix)
-  IP:18, RACE:50, ENEL:14, ENI:10, ISP:10, UCG:10, MONC:35, CPR:30,
-  MB:12, STLA:6, AMP:30, FCA:6, BMED:14,
-  MC:25, AIR:28, OR:30, SAN:16, BNP:8, ACA:8, DG:18, RNO:8,
-  BAYN:12, DTE:14, ALV:12, BMW:6, MBG:6, SIE:22,
-  NESN:22, ROG:18, NOVN:18, ABB:22,
-  HSBA:12, GSK:14, AZN:28, RIO:10, ULVR:18,
-  HEIA:22, INGA:8, AD:16,
-};
-
-
-// Ticker → sector label (for drawer display)
-const TICKER_SECTOR: Record<string, string> = {
-  AAPL:"Technology", MSFT:"Technology", NVDA:"Technology", GOOGL:"Technology",
-  GOOG:"Technology", META:"Technology", AMZN:"Consumer Cyclical", TSLA:"Consumer Cyclical",
-  NFLX:"Communication Services", AMD:"Technology", INTC:"Technology", ORCL:"Technology",
-  CRM:"Technology", ADBE:"Technology", QCOM:"Technology", TXN:"Technology",
-  AVGO:"Technology", ASML:"Technology", SAP:"Technology", INTU:"Technology",
-  JNJ:"Healthcare", PFE:"Healthcare", UNH:"Healthcare", ABBV:"Healthcare",
-  MRK:"Healthcare", LLY:"Healthcare", BMY:"Healthcare", AMGN:"Healthcare", GILD:"Healthcare",
-  JPM:"Financial Services", BAC:"Financial Services", WFC:"Financial Services",
-  GS:"Financial Services", MS:"Financial Services", V:"Financial Services",
-  MA:"Financial Services", AXP:"Financial Services", BLK:"Financial Services",
-  WMT:"Consumer Defensive", COST:"Consumer Defensive", HD:"Consumer Cyclical",
-  NKE:"Consumer Cyclical", MCD:"Consumer Defensive", SBUX:"Consumer Cyclical",
-  KO:"Consumer Defensive", PEP:"Consumer Defensive", PG:"Consumer Defensive",
-  XOM:"Energy", CVX:"Energy", COP:"Energy", SLB:"Energy", BP:"Energy",
-  SHEL:"Energy", TTE:"Energy",
-  BA:"Industrials", GE:"Industrials", CAT:"Industrials", MMM:"Industrials",
-  HON:"Industrials", RTX:"Industrials", LMT:"Industrials",
-  DIS:"Communication Services", CMCSA:"Communication Services", T:"Communication Services",
-  VZ:"Communication Services",
-  // European stocks
-  IP:"Industrials", RACE:"Consumer Cyclical", ENEL:"Utilities", ENI:"Energy",
-  ISP:"Financial Services", UCG:"Financial Services", MONC:"Consumer Cyclical",
-  CPR:"Consumer Defensive", MB:"Financial Services", STLA:"Consumer Cyclical",
-  AMP:"Healthcare", BMED:"Financial Services",
-  MC:"Consumer Cyclical", AIR:"Industrials", OR:"Consumer Defensive",
-  SAN:"Healthcare", BNP:"Financial Services", ACA:"Financial Services",
-  DG:"Industrials", RNO:"Consumer Cyclical",
-  BAYN:"Healthcare", DTE:"Communication Services", ALV:"Financial Services",
-  BMW:"Consumer Cyclical", MBG:"Consumer Cyclical", SIE:"Industrials",
-  NESN:"Consumer Defensive", ROG:"Healthcare", NOVN:"Healthcare", ABB:"Industrials",
-  HSBA:"Financial Services", GSK:"Healthcare", AZN:"Healthcare",
-  RIO:"Basic Materials", ULVR:"Consumer Defensive",
-  HEIA:"Consumer Defensive", INGA:"Financial Services", AD:"Consumer Defensive",
-};
-
 // ── Score helpers — 3 factors, beginner-friendly labels, 100 pts total ────────
-// Trend (40 pts): Is it trending up? — 200-day moving average position
+// Trend (40 pts): Is it trending up? — 200-day moving average position proxy
 // Value (35 pts): Is it fairly priced? — P/E vs sector fair P/E
-// Momentum (25 pts): Has it been moving the right way? — 3-month return
+// Momentum (25 pts): Has it been moving the right way? — 3-month return proxy
 
-// ── Scoring via 52-week range (v8/chart range=2d — same approach as /api/prices) ─
-// v7/quote and large-range v8/chart are rate-limited from Vercel IPs.
-// range=2d meta includes fiftyTwoWeekHigh/Low — sufficient for trend + momentum proxy.
+// Value sub-score from live P/E vs sector fair P/E. When the P/E is estimated
+// (no live data) or unavailable, return a neutral 17 so approximations don't
+// penalize the score.
+function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean): number {
+  if (pe === null || peEstimated || fairPE <= 0) return 17;
+  const ratio = pe / fairPE;
+  if (ratio < 0.7) return 35;
+  if (ratio < 0.9) return 28;
+  if (ratio < 1.1) return 21;
+  if (ratio < 1.4) return 14;
+  if (ratio < 1.8) return 7;
+  return 0;
+}
 
-function calcScore(price: number, high52: number | null, low52: number | null): {
+function calcScore(
+  price: number,
+  high52: number | null,
+  low52: number | null,
+  pe: number | null,
+  fairPE: number,
+  peEstimated: boolean,
+): {
   total: number; signal: "BUY" | "HOLD" | "SELL";
   trend: number; value: number; momentum: number;
   pctDiff: number; mom3m: number;
@@ -102,7 +44,7 @@ function calcScore(price: number, high52: number | null, low52: number | null): 
   const midpoint = (high52 + low52) / 2;
   const pctDiff  = parseFloat(((price - midpoint) / midpoint * 100).toFixed(2));
   const trendScore = pos > 0.75 ? 40 : pos > 0.60 ? 32 : pos > 0.45 ? 24 : pos > 0.30 ? 10 : 0;
-  const valueScore = 17; // neutral — PE unavailable without v7/quote
+  const valueScore = calcValueScore(pe, fairPE, peEstimated);
   const recovery   = (price - low52) / low52 * 100;
   const momScore   = recovery > 40 ? 25 : recovery > 20 ? 20 : recovery > 8 ? 15 : recovery > 2 ? 8 : 3;
   const mom3m      = parseFloat((recovery / 4).toFixed(2));
@@ -136,18 +78,6 @@ async function fetchTickerData(ticker: string) {
     } catch { continue; }
   }
   return null;
-}
-
-// ── Sector / fair-PE lookup (kept for meta display, PE always null now) ───────
-function getPEMeta(ticker: string): { pe: null; fairPE: number; sector: string; peEstimated: false } {
-  const key    = ticker.toUpperCase().replace(/\.[A-Z]+$/, "");
-  const sector = TICKER_SECTOR[key] ?? "";
-  return {
-    pe:          null,
-    fairPE:      FAIR_PE[sector] ?? TICKER_FAIR_PE[key] ?? DEFAULT_FAIR_PE,
-    sector,
-    peEstimated: false as const,
-  };
 }
 
 // ── Analyst consensus ─────────────────────────────────────────────────────────
@@ -246,18 +176,31 @@ export async function GET(req: NextRequest) {
     // Missing Groq key is non-fatal — return scored signals without reasoning.
     const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim() ?? "";
 
-    // 1 — Fetch price + 52-week range in parallel (v8/chart range=2d — same as /api/prices)
-    const [tickerData, analysts] = await Promise.all([
+    // 1 — Fetch price + 52-week range + analyst consensus + P/E in parallel.
+    //    Price/range uses v8/chart 2d (same cache as /api/prices). P/E uses
+    //    the unified getPERatio fallback chain (v7/quote for EU, v10
+    //    quoteSummary for US, Alpha Vantage backup, hardcoded estimate last).
+    const [tickerData, analysts, peData] = await Promise.all([
       Promise.all(tickers.map(t => fetchTickerData(t))),
       Promise.all(tickers.map(t => fetchAnalyst(t))),
+      Promise.all(tickers.map(t => getPERatio(t))),
     ]);
 
-    // 2 — Score using 52-week range proxy
+    // 2 — Score using 52-week range + live P/E for Value sub-score
     const computed = tickers.map((ticker, i) => {
       const td     = tickerData[i];
-      const peMeta = getPEMeta(ticker);
-      const result = td ? calcScore(td.price, td.high52, td.low52) : null;
-      return { ticker, result, ...peMeta };
+      const peMeta = peData[i];
+      const result = td
+        ? calcScore(td.price, td.high52, td.low52, peMeta.pe, peMeta.fairPE, peMeta.peEstimated)
+        : null;
+      return {
+        ticker,
+        result,
+        pe:          peMeta.pe,
+        fairPE:      peMeta.fairPE,
+        sector:      peMeta.sector,
+        peEstimated: peMeta.peEstimated,
+      };
     });
 
     // 3 — Groq reasoning (skipped when key missing or call fails)

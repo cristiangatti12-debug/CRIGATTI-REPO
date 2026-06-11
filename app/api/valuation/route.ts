@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getQuote } from "@/lib/marketData";
+import { AV_SECTOR, EU_APPROX_PE } from "@/lib/peMaps";
 
 export const dynamic = "force-dynamic";
 
@@ -20,34 +21,6 @@ const SECTOR_DEFAULTS: Record<string, {
   "Communication Services": { fairPE: 22, evEbitda: 14, wacc: 0.08, termGrowth: 0.03,  g1: 0.07 },
 };
 const DEFAULT_SECTOR = { fairPE: 20, evEbitda: 14, wacc: 0.09, termGrowth: 0.025, g1: 0.05 };
-
-// Approximate trailing PE for common EU stocks — used to derive EPS when financial
-// statement data is unavailable (FMP free plan covers EU profiles but not financials).
-const EU_APPROX_PE: Record<string, number> = {
-  IP:25, RACE:52, ENEL:11, ENI:7,  ISP:8,  UCG:8,  MONC:38, CPR:32,
-  MB:13, STLA:4,  AMP:32,  BMED:16,
-  MC:24, AIR:30,  OR:32,   SAN:14, BNP:7,  ACA:7,  DG:17,   RNO:5,
-  BAYN:11, DTE:12, ALV:11, BMW:5,  MBG:5,  SIE:24,
-  NESN:20, ROG:16, NOVN:16, ABB:24,
-  HSBA:11, GSK:13, AZN:30, RIO:9,  ULVR:19,
-  HEIA:20, INGA:7, AD:14,
-};
-
-// Alpha Vantage uses uppercase sector names — map to our keys
-const AV_SECTOR: Record<string, string> = {
-  "TECHNOLOGY":              "Technology",
-  "HEALTH CARE":             "Healthcare",
-  "CONSUMER DISCRETIONARY":  "Consumer Cyclical",
-  "CONSUMER STAPLES":        "Consumer Defensive",
-  "FINANCIALS":              "Financial Services",
-  "FINANCIAL SERVICES":      "Financial Services",
-  "ENERGY":                  "Energy",
-  "UTILITIES":               "Utilities",
-  "MATERIALS":               "Basic Materials",
-  "INDUSTRIALS":             "Industrials",
-  "REAL ESTATE":             "Real Estate",
-  "COMMUNICATION SERVICES":  "Communication Services",
-};
 
 export interface ValuationResult {
   ticker:  string;

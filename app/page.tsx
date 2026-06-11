@@ -919,7 +919,7 @@ export default function Home() {
     if (hs.length === 0) return;
 
     // Check 24h cache
-    const cacheKey = `vela_signals_v8_${appLang}_${hs.map(h => h.ticker).sort().join(",")}`;
+    const cacheKey = `vela_signals_v9_${appLang}_${hs.map(h => h.ticker).sort().join(",")}`;
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
@@ -960,7 +960,7 @@ export default function Home() {
   // ── Fetch market-wide signals (S&P 500 + STOXX 600, 12h localStorage cache)
   const fetchMarketSignals = useCallback(async () => {
     const heldStr  = holdings.map(h => h.ticker.toUpperCase()).sort().join(",");
-    const cacheKey = `vela_market_v7_${appLang}_${heldStr}`;
+    const cacheKey = `vela_market_v8_${appLang}_${heldStr}`;
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
@@ -1189,7 +1189,7 @@ export default function Home() {
   useEffect(() => {
     try {
       Object.keys(localStorage)
-        .filter(k => /^vela_signals_v[1234567]_/.test(k) || /^vela_market_v[12345]_/.test(k))
+        .filter(k => /^vela_signals_v[1-8]_/.test(k) || /^vela_market_v[1-7]_/.test(k) || /^vela_val_v[1-5]_/.test(k))
         .forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);

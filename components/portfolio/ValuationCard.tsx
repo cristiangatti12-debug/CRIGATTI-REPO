@@ -39,7 +39,7 @@ export default function ValuationCard({
   const staggerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Simple cards skip CASH_FLOW → different cache bucket so upgrading to full loads fresh
-  const CACHE_KEY = isSimple ? `vela_val_v5_simple_${ticker}` : `vela_val_v5_${ticker}`;
+  const CACHE_KEY = isSimple ? `vela_val_v6_simple_${ticker}` : `vela_val_v6_${ticker}`;
   const FETCH_URL = `/api/valuation?ticker=${ticker}&price=${price}${isSimple ? "&simple=true" : ""}`;
 
   function doFetch() {

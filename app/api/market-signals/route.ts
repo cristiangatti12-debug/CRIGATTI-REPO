@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getPERatio } from "@/lib/marketData";
 import type { MarketStockSignal, Region } from "@/types";
 
 // Exact same approach as /api/prices: individual per-symbol v8/chart calls, cached 1h by Next.js.
@@ -81,57 +82,30 @@ const WATCHLIST: WatchItem[] = [
   { ticker: "TTE.PA",    name: "TotalEnergies",    region: "EU" },
 ];
 
-// ── Fair P/E by sector + ticker hardcodes ─────────────────────────────────────
-const FAIR_PE: Record<string, number> = {
-  "Technology": 28, "Healthcare": 22, "Consumer Cyclical": 20,
-  "Consumer Defensive": 18, "Financial Services": 14, "Energy": 12,
-  "Utilities": 16, "Basic Materials": 15, "Industrials": 18,
-  "Real Estate": 20, "Communication Services": 22,
-};
-const DEFAULT_FAIR_PE = 18;
-
-const TICKER_FAIR_PE: Record<string, number> = {
-  AAPL:28, MSFT:28, NVDA:35, AMZN:35, GOOGL:25, META:22, TSLA:45,
-  AVGO:22, LLY:35,  JPM:14,  V:28,    UNH:22,   XOM:12,  MA:28,
-  COST:38, HD:22,   PG:24,   JNJ:18,  WMT:26,   BAC:12,  NFLX:25,
-  ORCL:22, CRM:30,  AMD:30,  KO:24,   PEP:24,   MRK:18,  ABBV:16,
-  CSCO:14, ACN:28,  MCD:24,  NKE:28,  TXN:20,   MS:14,   GE:20,
-  AMGN:18, GS:14,   CAT:18,  BLK:20,  ADBE:28,
-  ASML:35, SAP:22, AIR:18, BMW:8, BNP:10, SIE:18, ALV:12, MUV2:14,
-  BARC:10, HSBA:10, VOW3:7, ADS:22, DBK:10, UCG:10, ISP:10,
-};
-
-
-// Ticker → sector label
-const TICKER_SECTOR: Record<string, string> = {
-  AAPL:"Technology", MSFT:"Technology", NVDA:"Technology", AMZN:"Consumer Cyclical",
-  GOOGL:"Technology", META:"Technology", TSLA:"Consumer Cyclical",
-  AVGO:"Technology", LLY:"Healthcare", JPM:"Financial Services", V:"Financial Services",
-  UNH:"Healthcare", XOM:"Energy", MA:"Financial Services", COST:"Consumer Defensive",
-  HD:"Consumer Cyclical", PG:"Consumer Defensive", JNJ:"Healthcare", WMT:"Consumer Defensive",
-  BAC:"Financial Services", NFLX:"Communication Services", ORCL:"Technology",
-  CRM:"Technology", AMD:"Technology", KO:"Consumer Defensive", PEP:"Consumer Defensive",
-  MRK:"Healthcare", ABBV:"Healthcare", CSCO:"Technology", ACN:"Technology",
-  MCD:"Consumer Defensive", NKE:"Consumer Cyclical", TXN:"Technology",
-  MS:"Financial Services", GE:"Industrials", AMGN:"Healthcare", GS:"Financial Services",
-  CAT:"Industrials", BLK:"Financial Services", ADBE:"Technology",
-  // EU
-  ASML:"Technology", SAP:"Technology", AIR:"Industrials", BMW:"Consumer Cyclical",
-  BNP:"Financial Services", SIE:"Industrials", ALV:"Financial Services",
-  MUV2:"Financial Services", BARC:"Financial Services", HSBA:"Financial Services",
-  VOW3:"Consumer Cyclical", ADS:"Consumer Cyclical", DBK:"Financial Services",
-  UCG:"Financial Services", ISP:"Financial Services",
-  ENI:"Energy", ENEL:"Utilities", STM:"Technology", AXA:"Financial Services",
-  CAP:"Technology", KER:"Consumer Cyclical", PHIA:"Healthcare", ADYEN:"Technology",
-  ABBN:"Industrials",
-};
-
-// ── Scoring using 52-week range (v8/chart 2d, no v7/quote needed) ────────────
+// ── Scoring using 52-week range + live P/E ───────────────────────────────────
 // Trend  (40 pts): position in 52-week range (top quartile = strong uptrend)
-// Value  (35 pts): always neutral 17 — PE not available from v8/chart 2d
+// Value  (35 pts): P/E vs sector fair P/E (neutral 17 when only an estimate is available)
 // Momentum (25 pts): recovery from 52-week low (proxy for recent strength)
 
-function calcScore(price: number, high52: number | null, low52: number | null) {
+function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean): number {
+  if (pe === null || peEstimated || fairPE <= 0) return 17;
+  const ratio = pe / fairPE;
+  if (ratio < 0.7) return 35;
+  if (ratio < 0.9) return 28;
+  if (ratio < 1.1) return 21;
+  if (ratio < 1.4) return 14;
+  if (ratio < 1.8) return 7;
+  return 0;
+}
+
+function calcScore(
+  price: number,
+  high52: number | null,
+  low52: number | null,
+  pe: number | null,
+  fairPE: number,
+  peEstimated: boolean,
+) {
   if (!price || price <= 0 || !high52 || !low52 || high52 <= low52) {
     return null;
   }
@@ -139,18 +113,15 @@ function calcScore(price: number, high52: number | null, low52: number | null) {
   const range = high52 - low52;
   const pos   = (price - low52) / range;           // 0 = at 52wk low, 1 = at 52wk high
 
-  // Trend: where in the 52-week range is the price?
   const trendScore = pos > 0.75 ? 40 : pos > 0.60 ? 32 : pos > 0.45 ? 24 : pos > 0.30 ? 10 : 0;
   const midpoint   = (high52 + low52) / 2;
   const pctDiff    = parseFloat(((price - midpoint) / midpoint * 100).toFixed(2));
 
-  // Value: neutral (no PE available without v7/quote)
-  const valueScore = 17;
+  const valueScore = calcValueScore(pe, fairPE, peEstimated);
 
-  // Momentum: recovery from 52-week low
   const recovery  = (price - low52) / low52 * 100;
   const momScore  = recovery > 40 ? 25 : recovery > 20 ? 20 : recovery > 8 ? 15 : recovery > 2 ? 8 : 3;
-  const mom3m     = parseFloat((recovery / 4).toFixed(2)); // rough quarterly estimate for display
+  const mom3m     = parseFloat((recovery / 4).toFixed(2));
 
   const total    = trendScore + valueScore + momScore;
   const signal: "BUY" | "HOLD" | "SELL" = total >= 65 ? "BUY" : total >= 35 ? "HOLD" : "SELL";
@@ -209,26 +180,36 @@ export async function GET(req: NextRequest) {
 
   const allTickers = WATCHLIST.map(w => w.ticker);
 
-  // Single batch quote call — v7/quote is reliable from Vercel IPs.
-  // Returns price, 200MA, 52-week range/change, PE — everything needed for all 3 factors.
-  // No historical chart calls (v8/chart is rate-limited for bulk server requests).
-  // Fetch all 40 symbols in parallel — same pattern as /api/prices (proven to work).
-  // Individual per-symbol v8/chart calls with Next.js 1h fetch cache.
-  const rawQuotes = await Promise.all(allTickers.map(fetchQuote));
+  // Fetch price/52-week range AND P/E in parallel for all 40 tickers.
+  //   - Price/range:  per-symbol v8/chart 2d (cached 1h, shared with /api/prices)
+  //   - P/E:          getPERatio fallback chain (v7/quote for EU, v10 quoteSummary
+  //                   for US, AV backup, hardcoded estimate last). Cached 1h.
+  const [rawQuotes, peResults] = await Promise.all([
+    Promise.all(allTickers.map(fetchQuote)),
+    Promise.all(allTickers.map(getPERatio)),
+  ]);
   const quotesMap: Record<string, NonNullable<Awaited<ReturnType<typeof fetchQuote>>>> = {};
-  allTickers.forEach((t, i) => { if (rawQuotes[i]) quotesMap[t] = rawQuotes[i]!; });
+  const peMap: Record<string, Awaited<ReturnType<typeof getPERatio>>> = {};
+  allTickers.forEach((t, i) => {
+    if (rawQuotes[i]) quotesMap[t] = rawQuotes[i]!;
+    peMap[t] = peResults[i];
+  });
 
   // Score all stocks
   const scored = WATCHLIST
     .map((w) => {
-      const q = quotesMap[w.ticker];
-      if (!q) return null;
-      const result = calcScore(q.price, q.high52, q.low52);
+      const q  = quotesMap[w.ticker];
+      const pm = peMap[w.ticker];
+      if (!q || !pm) return null;
+      const result = calcScore(q.price, q.high52, q.low52, pm.pe, pm.fairPE, pm.peEstimated);
       if (!result) return null;
-      const key    = w.ticker.replace(/\.[A-Z]+$/, "").toUpperCase();
-      const sector = TICKER_SECTOR[key] || "";
-      const fairPE = FAIR_PE[sector] ?? TICKER_FAIR_PE[key] ?? DEFAULT_FAIR_PE;
-      return { ...w, ...result, pe: null as number | null, fairPE, sector, peEstimated: false };
+      return {
+        ...w, ...result,
+        pe:          pm.pe,
+        fairPE:      pm.fairPE,
+        sector:      pm.sector,
+        peEstimated: pm.peEstimated,
+      };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
