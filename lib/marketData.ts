@@ -263,42 +263,45 @@ function logFMPMiss(endpoint: string, ticker: string, status: number, body: unkn
   console.warn(`[vela] FMP ${endpoint} ${ticker} status=${status} → ${preview}`);
 }
 
+// P/E is a fundamentals-driven number derived from trailing earnings + the
+// most recent close — it does not change intraday in any meaningful way.
+// One day of cache is the right granularity: it keeps the FMP free-tier well
+// under quota and gives every user the same number through the trading day.
+const PE_CACHE_SECONDS = 86400;
+
 async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
   const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
   if (!FMP_KEY) return null;
 
-  // Primary: /api/v3/quote returns pe inline.
-  try {
-    const url = `https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(ticker)}?apikey=${FMP_KEY}`;
-    const res = await fetch(url, { next: { revalidate: 3600 } } as RequestInit);
-    const json = res.ok ? await res.json() : null;
-    const q = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    const pe = saneTrailingPE(q?.pe);
-    if (pe) return pe;
-    logFMPMiss("/api/v3/quote", ticker, res.status, json);
-  } catch (e) { console.warn(`[vela] FMP /api/v3/quote ${ticker} threw: ${(e as Error).message}`); }
-
-  // Secondary: /stable/key-metrics-ttm — peRatioTTM field.
-  try {
-    const url = `https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
-    const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
-    const json = res.ok ? await res.json() : null;
-    const m = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    const pe = saneTrailingPE(m?.peRatioTTM ?? m?.peRatio);
-    if (pe) return pe;
-    logFMPMiss("/stable/key-metrics-ttm", ticker, res.status, json);
-  } catch (e) { console.warn(`[vela] FMP /stable/key-metrics-ttm ${ticker} threw: ${(e as Error).message}`); }
-
-  // Tertiary: /stable/ratios-ttm — priceEarningsRatioTTM field.
+  // Primary: /stable/ratios-ttm — priceToEarningsRatioTTM (note the "To").
+  // This is the only FMP endpoint that returns trailing P/E on the post-Aug-2025
+  // free plan; the older /api/v3/quote returns 403 Legacy for new keys.
   try {
     const url = `https://financialmodelingprep.com/stable/ratios-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
-    const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
+    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
     const json = res.ok ? await res.json() : null;
     const r = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    const pe = saneTrailingPE(r?.priceEarningsRatioTTM ?? r?.peRatioTTM);
+    const pe = saneTrailingPE(r?.priceToEarningsRatioTTM ?? r?.priceEarningsRatioTTM ?? r?.peRatioTTM);
     if (pe) return pe;
-    logFMPMiss("/stable/ratios-ttm", ticker, res.status, json);
+    // 402 on /stable/* means the symbol is on a paid tier (typical for EU
+    // tickers on the free plan) — don't bother logging that path.
+    if (res.status !== 402) logFMPMiss("/stable/ratios-ttm", ticker, res.status, json);
   } catch (e) { console.warn(`[vela] FMP /stable/ratios-ttm ${ticker} threw: ${(e as Error).message}`); }
+
+  // Backup: invert earningsYieldTTM from /stable/key-metrics-ttm.
+  // Some tickers expose earnings yield but not the direct P/E field.
+  try {
+    const url = `https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
+    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
+    const json = res.ok ? await res.json() : null;
+    const m = Array.isArray(json) && json.length > 0 ? json[0] : null;
+    const direct = saneTrailingPE(m?.peRatioTTM ?? m?.priceToEarningsRatioTTM);
+    if (direct) return direct;
+    const yieldTTM = typeof m?.earningsYieldTTM === "number" ? m.earningsYieldTTM : null;
+    const inverted = yieldTTM && yieldTTM > 0 ? saneTrailingPE(1 / yieldTTM) : null;
+    if (inverted) return inverted;
+    if (res.status !== 402) logFMPMiss("/stable/key-metrics-ttm", ticker, res.status, json);
+  } catch (e) { console.warn(`[vela] FMP /stable/key-metrics-ttm ${ticker} threw: ${(e as Error).message}`); }
 
   return null;
 }
@@ -307,7 +310,7 @@ async function fetchYFQuoteSummaryPE(ticker: string): Promise<number | null> {
   for (const host of ["query2", "query1"]) {
     try {
       const url = `https://${host}.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=summaryDetail&formatted=false`;
-      const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 3600 } } as RequestInit);
+      const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
       if (!res.ok) continue;
       const json = await res.json();
       const sd   = json?.quoteSummary?.result?.[0]?.summaryDetail;
@@ -324,7 +327,7 @@ async function fetchYFQuoteSummaryPE(ticker: string): Promise<number | null> {
 async function fetchYFV7QuotePE(ticker: string): Promise<number | null> {
   try {
     const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}`;
-    const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 3600 } } as RequestInit);
+    const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
     if (!res.ok) return null;
     const json = await res.json();
     const q = json?.quoteResponse?.result?.[0];
@@ -341,7 +344,7 @@ async function fetchAlphaVantagePE(ticker: string): Promise<number | null> {
   if (!AV_KEY) return null;
   try {
     const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${AV_KEY}`;
-    const res = await fetch(url, { next: { revalidate: 21600 } } as RequestInit);
+    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
     if (!res.ok) return null;
     const json = await res.json();
     if (json?.Note || json?.Information) return null;     // rate-limited
