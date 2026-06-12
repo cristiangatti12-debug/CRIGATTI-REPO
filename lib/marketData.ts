@@ -440,10 +440,27 @@ export async function getPERatio(ticker: string): Promise<PERatioResult> {
     return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false, unprofitable: false };
   }
 
+  const isInternational = EU_SUFFIX.test(ticker);
+
+  // For US tickers, kick off the AV EPS-sign cross-check in parallel with the
+  // FMP call. AV reports GAAP TTM EPS; when it's negative we treat the company
+  // as unprofitable even if FMP reports a positive non-GAAP P/E (INTC case).
+  // AV returns null when rate-limited so the chain degrades gracefully past
+  // the 25/day free-tier ceiling. EU tickers skip this — AV doesn't cover them.
+  const avEPSPromise = isInternational ? Promise.resolve(null) : fetchAlphaVantageEPSSign(ticker);
+
   // 1. FMP — covers US on the free tier.
   const fmp = await fetchFMPQuotePE(ticker);
   if (fmp.unprofitable) {
+    void avEPSPromise; // warm cache for next call even though we don't read it
     return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+  }
+  // Cross-check FMP's "profitable" verdict against AV's GAAP EPS sign.
+  if (fmp.pe && !isInternational) {
+    const avUnprofitable = await avEPSPromise;
+    if (avUnprofitable === true) {
+      return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+    }
   }
   if (fmp.pe) {
     return { pe: fmp.pe, fairPE, sector, source: "live-fmp", peEstimated: false, unprofitable: false };
@@ -454,31 +471,45 @@ export async function getPERatio(ticker: string): Promise<PERatioResult> {
   if (fin.unprofitable) {
     return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
   }
+  if (fin.pe && !isInternational) {
+    const avUnprofitable = await avEPSPromise;
+    if (avUnprofitable === true) {
+      return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+    }
+  }
   if (fin.pe) {
     return { pe: fin.pe, fairPE, sector, source: "live-finnhub", peEstimated: false, unprofitable: false };
   }
 
   // 3. Yahoo Finance — usually 401 from Vercel IPs since late 2025 but cheap to try.
-  const isInternational = EU_SUFFIX.test(ticker);
   if (isInternational) {
     const v7 = await fetchYFV7QuotePE(ticker);
     if (v7) return { pe: v7, fairPE, sector, source: "live-yf-quote", peEstimated: false, unprofitable: false };
   } else {
     const yfPE = await fetchYFQuoteSummaryPE(ticker);
-    if (yfPE) return { pe: yfPE, fairPE, sector, source: "live-yf-summary", peEstimated: false, unprofitable: false };
-    // 4. Alpha Vantage — US-only, free tier is 25 calls/day.
+    if (yfPE) {
+      const avUnprofitable = await avEPSPromise;
+      if (avUnprofitable === true) {
+        return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+      }
+      return { pe: yfPE, fairPE, sector, source: "live-yf-summary", peEstimated: false, unprofitable: false };
+    }
+    // 4. Alpha Vantage P/E — US-only, free tier 25 calls/day.
     const avPE = await fetchAlphaVantagePE(ticker);
-    if (avPE) return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false, unprofitable: false };
+    if (avPE) {
+      const avUnprofitable = await avEPSPromise;
+      if (avUnprofitable === true) {
+        return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+      }
+      return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false, unprofitable: false };
+    }
   }
 
   // 5. US-only profitability backup before the estimate fallback. When no live
-  // P/E source returned anything for a US ticker (typical for newer or
-  // specialized listings — SNOW was the trigger), check Alpha Vantage's EPS
-  // sign before defaulting to a "neutral" sector estimate. This prevents the
-  // Portfolio tab from showing a neutral Value score while the Analysis tab
-  // independently reports the company as unprofitable.
+  // P/E source returned anything (SNOW pattern), reuse the AV EPS-sign promise
+  // we kicked off above.
   if (!isInternational) {
-    const avUnprofitable = await fetchAlphaVantageEPSSign(ticker);
+    const avUnprofitable = await avEPSPromise;
     if (avUnprofitable === true) {
       return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
     }
