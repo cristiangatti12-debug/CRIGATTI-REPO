@@ -84,7 +84,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json([]);
     }
 
-    const heldSet = new Set(held_tickers.map(t => t.toUpperCase()));
     const headlineTexts = headlines
       .map((h, i) => `[${i}] ${h.title}`)
       .join("\n");

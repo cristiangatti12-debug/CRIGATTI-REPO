@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import type { ValuationResult } from "@/app/api/valuation/route";
+import { userKey } from "@/lib/userCache";
 
 function fmt2(n: number) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fmtB(n: number) { return `$${(n / 1e9).toFixed(2)}B`; }
@@ -38,8 +39,9 @@ export default function ValuationCard({
   const retryTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const staggerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Simple cards skip CASH_FLOW → different cache bucket so upgrading to full loads fresh
-  const CACHE_KEY = isSimple ? `vela_val_v8_simple_${ticker}` : `vela_val_v8_${ticker}`;
+  // Simple cards skip CASH_FLOW → different cache bucket so upgrading to full loads fresh.
+  // Per-user namespacing keeps cards isolated across accounts on the same device.
+  const CACHE_KEY = userKey(isSimple ? `vela_val_v8_simple_${ticker}` : `vela_val_v8_${ticker}`);
   const FETCH_URL = `/api/valuation?ticker=${ticker}&price=${price}${isSimple ? "&simple=true" : ""}`;
 
   function doFetch() {
@@ -66,7 +68,9 @@ export default function ValuationCard({
         if (d.error) { setError(d.error); return; }
         const result = d as ValuationResult;
         setData(result);
-        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ d: result, date: today })); } catch {}
+        if (CACHE_KEY) {
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ d: result, date: today })); } catch {}
+        }
       })
       .catch(() => setError("Network error — please try again"))
       .finally(() => setLoading(false));
@@ -74,16 +78,18 @@ export default function ValuationCard({
 
   useEffect(() => {
     const today = new Date().toISOString().slice(0, 10);
-    try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const { d, date } = JSON.parse(cached);
-        if (date === today) {
-          setData(d);
-          return;
+    if (CACHE_KEY) {
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+          const { d, date } = JSON.parse(cached);
+          if (date === today) {
+            setData(d);
+            return;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     if (staggerMs > 0) {
       setQueued(true);

@@ -346,6 +346,12 @@ RLS enabled on both tables — users can only read/write their own rows.
 - `GROQ_API_KEY` — Groq API key
 - `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase anon key
+- `SUPABASE_SERVICE_ROLE_KEY` — required for full account deletion (`/api/delete-account`). Without it the route wipes user data + signs out but the auth row lingers and an admin must remove it manually.
+- `FMP_API_KEY` — Financial Modeling Prep (optional but strongly recommended). Provides EU fundamentals + a 250-req/day free tier that absorbs traffic when AV exhausts its 25-req/day limit.
+- `FINNHUB_API_KEY` — optional, used as third-fallback P/E source.
+- `GOOGLE_AI_API_KEY` — optional Gemini key for AI fallback chain (allocation, digest, news sentiment).
+- `ANTHROPIC_API_KEY` — optional, enables Claude in the allocation model chain.
+- `NEXT_PUBLIC_SITE_URL` — pin Supabase email confirmation links to the production origin (prevents preview-deploy signups from getting blocked by the redirect allowlist).
 
 **TypeScript check before deploy:** `npx tsc --noEmit`
 

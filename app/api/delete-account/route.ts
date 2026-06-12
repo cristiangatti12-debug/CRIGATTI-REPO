@@ -41,12 +41,19 @@ export async function DELETE() {
         console.error("Error deleting auth user:", deleteError);
         return NextResponse.json({ error: "Could not delete auth user" }, { status: 500 });
       }
-    } else {
-      // No service role key — sign out only (data already wiped)
-      await supabase.auth.signOut();
+      return NextResponse.json({ ok: true });
     }
 
-    return NextResponse.json({ ok: true });
+    // No service role key configured — we can only wipe data + sign out. The
+    // auth row will linger, which means the user can't re-register with the
+    // same email until an operator removes it from the Supabase dashboard.
+    // Surface that fact so the UI (and any monitoring) sees it.
+    await supabase.auth.signOut();
+    return NextResponse.json({
+      ok: true,
+      partial: "data_wiped_account_retained",
+      message: "Your data was deleted. The account itself can only be removed by an administrator — contact support if you want to re-use this email.",
+    });
   } catch (err) {
     console.error("Delete account error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

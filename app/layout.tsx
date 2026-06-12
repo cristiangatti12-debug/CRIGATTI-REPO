@@ -40,22 +40,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="mobile-web-app-capable" content="yes" />
-        {/* Force-unregister any lingering stale service workers (vela-v3 and earlier) */}
+        {/* Reap any stale service workers from previous PWA experiments. We're
+            not registering a new SW for MVP — `/sw.js` itself unregisters on
+            activate, which combined with re-registration here created a
+            register-then-unregister thrash on every page load. A real caching
+            SW will land with the native-app wrap. */}
         <script dangerouslySetInnerHTML={{
           __html: `navigator.serviceWorker?.getRegistrations().then(regs => regs.forEach(r => r.unregister()));`
         }} />
       </head>
       <body className="min-h-full">
         {children}
-        <script dangerouslySetInnerHTML={{
-          __html: `
-            if ('serviceWorker' in navigator) {
-              window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js');
-              });
-            }
-          `
-        }} />
       </body>
     </html>
   );

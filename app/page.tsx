@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getLang, setLang, type Lang } from "@/lib/i18n";
+import { rememberUid, userKey, wipeUserCache } from "@/lib/userCache";
 import type { NewsItem, TickerSignal, MarketSignalsResponse, MarketStockSignal, CommunityAnalysis } from "@/types";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
@@ -931,18 +932,21 @@ export default function Home() {
   const fetchSignals = useCallback(async (hs: Holding[]) => {
     if (hs.length === 0) return;
 
-    // Check 24h cache
-    const cacheKey = `vela_signals_v11_${appLang}_${hs.map(h => h.ticker).sort().join(",")}`;
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) {
-          setSignals(Object.fromEntries((data as TickerSignal[]).map(s => [s.ticker, s])));
-          return;
+    // Check 24h cache — per-user so two accounts on the same device don't
+    // see each other's signals.
+    const cacheKey = userKey(`vela_signals_v11_${appLang}_${hs.map(h => h.ticker).sort().join(",")}`);
+    if (cacheKey) {
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const { data, ts } = JSON.parse(cached);
+          if (Date.now() - ts < 24 * 60 * 60 * 1000) {
+            setSignals(Object.fromEntries((data as TickerSignal[]).map(s => [s.ticker, s])));
+            return;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     setSignalsLoading(true);
     try {
@@ -953,18 +957,21 @@ export default function Home() {
       if (Array.isArray(data)) {
         setSignals(Object.fromEntries(data.map(s => [s.ticker, s])));
         // Only cache when we received real scored data — don't cache null-score fallbacks
-        if (data.some(s => s.score !== null)) {
+        if (cacheKey && data.some(s => s.score !== null)) {
           localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
         }
         // Save daily score snapshot for trend arrows (only if date changed)
-        const today = new Date().toISOString().slice(0, 10);
-        try {
-          const existing = JSON.parse(localStorage.getItem("vela_score_snap_v1") ?? "null");
-          if (!existing || existing.date !== today) {
-            const scores = Object.fromEntries(data.map(s => [s.ticker, s.score ?? 0]));
-            localStorage.setItem("vela_score_snap_v1", JSON.stringify({ date: today, scores }));
-          }
-        } catch {}
+        const snapKey = userKey("vela_score_snap_v1");
+        if (snapKey) {
+          const today = new Date().toISOString().slice(0, 10);
+          try {
+            const existing = JSON.parse(localStorage.getItem(snapKey) ?? "null");
+            if (!existing || existing.date !== today) {
+              const scores = Object.fromEntries(data.map(s => [s.ticker, s.score ?? 0]));
+              localStorage.setItem(snapKey, JSON.stringify({ date: today, scores }));
+            }
+          } catch {}
+        }
       }
     } catch {}
     setSignalsLoading(false);
@@ -973,17 +980,19 @@ export default function Home() {
   // ── Fetch market-wide signals (S&P 500 + STOXX 600, 12h localStorage cache)
   const fetchMarketSignals = useCallback(async () => {
     const heldStr  = holdings.map(h => h.ticker.toUpperCase()).sort().join(",");
-    const cacheKey = `vela_market_v10_${appLang}_${heldStr}`;
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) {
-          setMarketSignals(data as MarketSignalsResponse);
-          return;
+    const cacheKey = userKey(`vela_market_v10_${appLang}_${heldStr}`);
+    if (cacheKey) {
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const { data, ts } = JSON.parse(cached);
+          if (Date.now() - ts < 24 * 60 * 60 * 1000) {
+            setMarketSignals(data as MarketSignalsResponse);
+            return;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     setMarketLoading(true);
     try {
@@ -992,7 +1001,7 @@ export default function Home() {
       const data = await res.json() as MarketSignalsResponse;
       if (data.buys && data.sells) {
         setMarketSignals(data);
-        localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
+        if (cacheKey) localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
       }
     } catch {}
     setMarketLoading(false);
@@ -1020,14 +1029,17 @@ export default function Home() {
   const fetchDigest = useCallback(async (hs: Holding[]) => {
     try {
       const today = new Date().toLocaleDateString("en-CA");
-      const cacheKey = `vela_digest_${today}`;
+      const cacheKey = userKey(`vela_digest_${today}`);
 
-      // Check localStorage
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        setDigest(cached);
-        setDigestDismissed(false);
-        return;
+      // Check localStorage (per-user — two accounts on the same device must not
+      // share each other's daily digest)
+      if (cacheKey) {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          setDigest(cached);
+          setDigestDismissed(false);
+          return;
+        }
       }
 
       // Compute price changes (would need quotes data, using 0 as fallback)
@@ -1048,7 +1060,7 @@ export default function Home() {
       const data = await res.json();
       setDigest(data.digest);
       setDigestDismissed(false);
-      localStorage.setItem(cacheKey, data.digest);
+      if (cacheKey) localStorage.setItem(cacheKey, data.digest);
     } catch {
       // Silently fail
     }
@@ -1140,6 +1152,8 @@ export default function Home() {
         return;
       }
       setUserId(u.id);
+      // Remember the UID for every userKey() lookup later in this session.
+      rememberUid(u.id);
       setUserEmail(u.email ?? "");
       setJoinDate(u.created_at ?? "");
       // display_name from user_metadata (set at signup), fall back to email prefix
@@ -1187,22 +1201,29 @@ export default function Home() {
     if (saved) setRiskResult(saved);
   }, []);
 
-  // Load previous-day score snapshot for trend arrows
+  // Load previous-day score snapshot for trend arrows. Runs after userId is
+  // set so userKey() can prefix correctly; re-run when userId changes (e.g.
+  // sign-in flow).
   useEffect(() => {
+    const snapKey = userKey("vela_score_snap_v1");
+    if (!snapKey) return;
     try {
-      const snap = JSON.parse(localStorage.getItem("vela_score_snap_v1") ?? "null");
+      const snap = JSON.parse(localStorage.getItem(snapKey) ?? "null");
       const today = new Date().toISOString().slice(0, 10);
       if (snap?.date && snap.date !== today && snap.scores) {
         setPrevScores(snap.scores as Record<string, number>);
       }
     } catch {}
-  }, []);
+  }, [userId]);
 
   // ── Wipe stale signal caches from old scoring versions ───────────────────────
+  // Also matches the per-user `u:<uid>:vela_…` prefix that lib/userCache writes,
+  // and the `_simple_` variant of the valuation cache.
   useEffect(() => {
     try {
+      const stale = /^(?:u:[^:]+:)?(?:vela_signals_v([1-9]|10)_|vela_market_v[1-9]_|vela_val_v[1-7]_(simple_)?|vela_wl_signals_v[1-3]_)/;
       Object.keys(localStorage)
-        .filter(k => /^vela_signals_v([1-9]|10)_/.test(k) || /^vela_market_v[1-9]_/.test(k) || /^vela_val_v[1-7]_/.test(k) || /^vela_wl_signals_v[1-3]_/.test(k))
+        .filter(k => stale.test(k))
         .forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);
@@ -2572,6 +2593,9 @@ export default function Home() {
                   {/* Sign out */}
                   <button
                     onClick={async () => {
+                      // Wipe per-user caches before signing out so the next
+                      // person on this device starts clean.
+                      wipeUserCache();
                       await supabase.auth.signOut();
                       window.location.href = "/login";
                     }}
@@ -2615,10 +2639,9 @@ export default function Home() {
                         try {
                           await fetch("/api/delete-account", { method: "DELETE" });
                         } catch {}
-                        // Clear all local state regardless of API result
-                        Object.keys(localStorage).forEach(k => {
-                          if (k.startsWith("vela_")) localStorage.removeItem(k);
-                        });
+                        // Clear all local state regardless of API result. Use the
+                        // userCache helper so per-user-prefixed keys go too.
+                        wipeUserCache();
                         await supabase.auth.signOut();
                         window.location.href = "/login";
                       }}

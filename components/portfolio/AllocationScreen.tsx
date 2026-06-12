@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { supabase } from "@/lib/supabase";
+import { userKey } from "@/lib/userCache";
 import type { AllocationResult, AllocationSlice, BehaviorFlags } from "@/types";
 
 interface HoldingSlim {
@@ -31,8 +32,16 @@ interface Props {
 }
 
 const COLORS    = ["#38BDF8", "#818CF8", "#34D399", "#FBBF24", "#F87171"];
-const CACHE_KEY = "vela_allocation_v1";
 const CACHE_TTL = 24 * 60 * 60 * 1000;
+
+// Cache key includes the risk profile, score, and the sorted ticker set so a
+// retake or a portfolio edit produces a fresh recommendation instead of
+// serving yesterday's plan for another 24 hours. Per-user namespacing is
+// handled by lib/userCache.
+function buildCacheKey(profile: string, score: number, holdings: HoldingSlim[]): string | null {
+  const tickerFingerprint = holdings.map(h => h.ticker.toUpperCase()).sort().join(",");
+  return userKey(`vela_allocation_v2_${profile}_${score}_${tickerFingerprint}`);
+}
 
 export default function AllocationScreen({
   onClose, lang, profile, score, holdings, full_questionnaire, behavioral_flags, risk_profile
@@ -55,14 +64,19 @@ export default function AllocationScreen({
   async function loadAllocation() {
     setError(null);
     setLoading(true);
+    const cacheKey = buildCacheKey(profile, score, holdings);
+    // Best-effort sweep of the v1 key — pre-namespaced rows could shadow v2.
+    try { localStorage.removeItem("vela_allocation_v1"); } catch {}
     try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp < CACHE_TTL) {
-          setResult(data);
-          setLoading(false);
-          return;
+      if (cacheKey) {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const { data, timestamp } = JSON.parse(cached);
+          if (Date.now() - timestamp < CACHE_TTL) {
+            setResult(data);
+            setLoading(false);
+            return;
+          }
         }
       }
     } catch {}
@@ -85,7 +99,7 @@ export default function AllocationScreen({
       if (!res.ok) throw new Error();
       const data: ExtendedAllocationResult = await res.json();
       setResult(data);
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+      if (cacheKey) localStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }));
 
       // Auto-save to allocation_history
       await saveAllocationHistory(data);

@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { rememberUid, userKey } from "@/lib/userCache";
 import {
   getLang, type Lang,
   T, ADD_INTENT_REGEX, CONFIRM_YES_REGEX, CONFIRM_NO_REGEX,
@@ -120,7 +121,9 @@ export default function ChatPage() {
     langRef.current = l;
     setLangState(l);
     supabase.auth.getUser().then(({ data }) => {
-      userIdRef.current = data.user?.id ?? null;
+      const uid = data.user?.id ?? null;
+      userIdRef.current = uid;
+      rememberUid(uid);
     });
     fetchPortfolioSummary();
   }, []);
@@ -131,19 +134,28 @@ export default function ChatPage() {
       const query = supabase.from("holdings").select("*");
       const { data: holdings } = user?.id ? await query.eq("user_id", user.id) : await query;
       if (!holdings || holdings.length === 0) return;
-      const tickers = holdings.map((h: any) => h.ticker).join(",");
-      const res = await fetch(`/api/prices?tickers=${encodeURIComponent(tickers)}`);
-      const prices: Record<string, any> = await res.json();
+      // /api/prices reads ?symbols= and returns an ARRAY of quote objects:
+      // [{ symbol, price, currency, … }]. The earlier version used ?tickers=
+      // and treated the response as a record, which silently fell back to
+      // cost-per-share so the chat header always showed PnL = 0.
+      const symbols = holdings.map((h: any) => h.ticker).join(",");
+      const res = await fetch(`/api/prices?symbols=${encodeURIComponent(symbols)}`);
+      const quoteArr = (await res.json()) as Array<{ symbol: string; price: number; currency?: string }>;
+      const quotes: Record<string, { price: number; currency?: string }> = {};
+      for (const q of quoteArr ?? []) quotes[q.symbol] = q;
       let totalValue = 0, totalCost = 0;
+      let currencyCode = "USD";
       holdings.forEach((h: any) => {
-        const q = prices[h.ticker];
-        const price = q?.price ?? Number(h.cost_per_share);
+        const q = quotes[h.ticker];
+        const price = q?.price && q.price > 0 ? q.price : Number(h.cost_per_share);
+        if (q?.currency) currencyCode = q.currency;
         totalValue += price * Number(h.shares);
         totalCost  += Number(h.cost_per_share) * Number(h.shares);
       });
       const totalPnl    = totalValue - totalCost;
       const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
-      setPortfolioSummary({ totalValue, totalPnl, totalPnlPct, currency: "$" });
+      const currencySymbol = currencyCode === "EUR" ? "€" : currencyCode === "GBP" ? "£" : "$";
+      setPortfolioSummary({ totalValue, totalPnl, totalPnlPct, currency: currencySymbol });
     } catch { /* non-critical */ }
   }
 
@@ -177,34 +189,48 @@ export default function ChatPage() {
   function setPending(p: PendingHolding) { pendingRef.current = p; }
 
   // ── Load persisted chat history ───────────────────────────────────────────
+  // Cache key is user-scoped (lib/userCache) so two accounts on the same device
+  // don't read each other's conversation. Wait for auth.getUser to resolve
+  // before reading — otherwise userKey() returns null on first paint.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(CHAT_CACHE_KEY);
-      if (saved) {
-        const parsed: Message[] = JSON.parse(saved);
-        if (parsed.length > 0) {
-          setMessages(parsed);
-          msgIdRef.current = Math.max(...parsed.map(m => m.id));
-          greetedRef.current = true;
-          setShowChips(false);
-          return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await supabase.auth.getUser();
+      } catch {}
+      if (cancelled) return;
+      const key = userKey(CHAT_CACHE_KEY);
+      try {
+        const saved = key ? localStorage.getItem(key) : null;
+        if (saved) {
+          const parsed: Message[] = JSON.parse(saved);
+          if (parsed.length > 0) {
+            setMessages(parsed);
+            msgIdRef.current = Math.max(...parsed.map(m => m.id));
+            greetedRef.current = true;
+            setShowChips(false);
+            return;
+          }
         }
+      } catch {}
+      // No history — show greeting
+      if (!greetedRef.current) {
+        greetedRef.current = true;
+        setTimeout(() => addMsg("vela", T[getLang()].greeting), 400);
       }
-    } catch {}
-    // No history — show greeting
-    if (!greetedRef.current) {
-      greetedRef.current = true;
-      setTimeout(() => addMsg("vela", T[getLang()].greeting), 400);
-    }
+    })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Persist messages to localStorage on each change ──────────────────────
   useEffect(() => {
     if (messages.length === 0) return;
+    const key = userKey(CHAT_CACHE_KEY);
+    if (!key) return;
     try {
       const toSave = messages.slice(-MAX_SAVED_MSGS);
-      localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify(toSave));
+      localStorage.setItem(key, JSON.stringify(toSave));
     } catch {}
   }, [messages]);
 
@@ -417,7 +443,8 @@ export default function ChatPage() {
   }
 
   function clearHistory() {
-    try { localStorage.removeItem(CHAT_CACHE_KEY); } catch {}
+    const key = userKey(CHAT_CACHE_KEY);
+    try { if (key) localStorage.removeItem(key); } catch {}
     setMessages([]);
     aiHistoryRef.current = [];
     setStep("idle");

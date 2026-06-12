@@ -2,8 +2,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { Lang } from "@/lib/i18n";
 import type { TickerSignal, WatchlistItem } from "@/types";
+import { userKey } from "@/lib/userCache";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+// Raw keys — wrapped with userKey() at every read/write so two accounts on
+// the same device don't share watchlists or watchlist signals.
 const STORAGE_KEY = "vela_watchlist_v1";
 const SIG_CACHE   = "vela_wl_signals_v4";
 
@@ -18,10 +21,14 @@ function fmt(n: number, digits = 2) {
   return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 function loadItems(): WatchlistItem[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]"); } catch { return []; }
+  const key = userKey(STORAGE_KEY);
+  if (!key) return [];
+  try { return JSON.parse(localStorage.getItem(key) ?? "[]"); } catch { return []; }
 }
 function saveItems(items: WatchlistItem[]) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(items)); } catch {}
+  const key = userKey(STORAGE_KEY);
+  if (!key) return;
+  try { localStorage.setItem(key, JSON.stringify(items)); } catch {}
 }
 
 // ── Add modal ─────────────────────────────────────────────────────────────────
@@ -205,17 +212,19 @@ export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
     const hs = overrideItems ?? items;
     if (hs.length === 0) { setSignals({}); return; }
     const sorted   = hs.map(i => i.ticker).sort().join(",");
-    const cacheKey = `${SIG_CACHE}_${appLang}_${sorted}`;
-    try {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (Date.now() - ts < 24 * 60 * 60 * 1000) {
-          setSignals(Object.fromEntries((data as TickerSignal[]).map(s => [s.ticker, s])));
-          return;
+    const cacheKey = userKey(`${SIG_CACHE}_${appLang}_${sorted}`);
+    if (cacheKey) {
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const { data, ts } = JSON.parse(cached);
+          if (Date.now() - ts < 24 * 60 * 60 * 1000) {
+            setSignals(Object.fromEntries((data as TickerSignal[]).map(s => [s.ticker, s])));
+            return;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
     setSignalsLoading(true);
     try {
       const tickers = hs.map(i => i.ticker).join(",");
@@ -224,7 +233,7 @@ export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
       const data: TickerSignal[] = await res.json();
       if (Array.isArray(data)) {
         setSignals(Object.fromEntries(data.map(s => [s.ticker, s])));
-        localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
+        if (cacheKey) localStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() }));
       }
     } catch {}
     setSignalsLoading(false);

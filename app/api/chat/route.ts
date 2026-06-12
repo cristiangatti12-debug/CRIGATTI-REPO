@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   let portfolioContext = "The user has no holdings in their portfolio yet.";
+  // Re-used for the second pass that builds sector/concentration insights, so we
+  // don't pay for a second auth.getUser() + DB round-trip.
+  let cachedHoldings: any[] | null = null;
 
   try {
     const query = supabase.from("holdings").select("*");
@@ -50,6 +53,7 @@ export async function POST(req: NextRequest) {
     const { data: holdings } = user?.id
       ? await query.eq("user_id", user.id)
       : await query;
+    cachedHoldings = holdings ?? null;
 
     if (holdings && holdings.length > 0) {
       // Fetch all prices in parallel, directly from Yahoo Finance
@@ -91,12 +95,7 @@ export async function POST(req: NextRequest) {
   // ── Build sector/concentration insights for system prompt ────────────────
   let portfolioInsights = "";
   try {
-    const supabaseIns = await createClient();
-    const { data: { user: insUser } } = await supabaseIns.auth.getUser();
-    const insQuery = supabaseIns.from("holdings").select("*");
-    const { data: insHoldings } = insUser?.id
-      ? await insQuery.eq("user_id", insUser.id)
-      : await insQuery;
+    const insHoldings = cachedHoldings;
 
     if (insHoldings && insHoldings.length > 0) {
       const insPrices = await Promise.all(insHoldings.map((h: any) => fetchPrice(h.ticker)));
