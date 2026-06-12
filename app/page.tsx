@@ -506,6 +506,12 @@ function HoldingSignalRow({
             score={f.value} max={35}
             description={(() => {
               const sectorLabel = m.sector || "this sector";
+              if (m.unprofitable) {
+                return t(
+                  "Currently unprofitable — company has negative trailing earnings, so P/E is not meaningful. Treat valuation with caution.",
+                  "Attualmente in perdita — utili negativi su base TTM, quindi il P/E non è significativo. Valuta con cautela."
+                );
+              }
               if (m.pe !== null && typeof m.pe === "number") {
                 const approxNote = m.peEstimated ? " (approx.)" : "";
                 const compare = m.pe < m.fairPE
@@ -631,10 +637,17 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
           label={t("Fair Value ⚖️", "Valore Equo ⚖️")}
           score={stock.factors.value} max={35}
           description={(() => {
-            const pe          = stock.meta?.pe ?? null;
-            const fairPE      = stock.meta?.fairPE ?? 18;
-            const sector      = stock.meta?.sector ?? "";
-            const peEstimated = stock.meta?.peEstimated ?? false;
+            const pe           = stock.meta?.pe ?? null;
+            const fairPE       = stock.meta?.fairPE ?? 18;
+            const sector       = stock.meta?.sector ?? "";
+            const peEstimated  = stock.meta?.peEstimated ?? false;
+            const unprofitable = stock.meta?.unprofitable ?? false;
+            if (unprofitable) {
+              return t(
+                "Currently unprofitable — company has negative trailing earnings, so P/E is not meaningful. Treat valuation with caution.",
+                "Attualmente in perdita — utili negativi su base TTM, quindi il P/E non è significativo. Valuta con cautela."
+              );
+            }
             if (pe !== null && typeof pe === "number") {
               const approxNote  = peEstimated ? t(" (approx.)", " (stimato)") : "";
               const sectorLabel = sector || t("this sector", "questo settore");
@@ -919,7 +932,7 @@ export default function Home() {
     if (hs.length === 0) return;
 
     // Check 24h cache
-    const cacheKey = `vela_signals_v9_${appLang}_${hs.map(h => h.ticker).sort().join(",")}`;
+    const cacheKey = `vela_signals_v10_${appLang}_${hs.map(h => h.ticker).sort().join(",")}`;
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
@@ -960,7 +973,7 @@ export default function Home() {
   // ── Fetch market-wide signals (S&P 500 + STOXX 600, 12h localStorage cache)
   const fetchMarketSignals = useCallback(async () => {
     const heldStr  = holdings.map(h => h.ticker.toUpperCase()).sort().join(",");
-    const cacheKey = `vela_market_v8_${appLang}_${heldStr}`;
+    const cacheKey = `vela_market_v9_${appLang}_${heldStr}`;
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
@@ -1189,7 +1202,7 @@ export default function Home() {
   useEffect(() => {
     try {
       Object.keys(localStorage)
-        .filter(k => /^vela_signals_v[1-8]_/.test(k) || /^vela_market_v[1-7]_/.test(k) || /^vela_val_v[1-5]_/.test(k))
+        .filter(k => /^vela_signals_v[1-9]_/.test(k) || /^vela_market_v[1-8]_/.test(k) || /^vela_val_v[1-5]_/.test(k))
         .forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);

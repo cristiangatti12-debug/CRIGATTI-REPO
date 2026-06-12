@@ -87,7 +87,8 @@ const WATCHLIST: WatchItem[] = [
 // Value  (35 pts): P/E vs sector fair P/E (neutral 17 when only an estimate is available)
 // Momentum (25 pts): recovery from 52-week low (proxy for recent strength)
 
-function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean): number {
+function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean, unprofitable: boolean): number {
+  if (unprofitable) return 5;
   if (pe === null || peEstimated || fairPE <= 0) return 17;
   const ratio = pe / fairPE;
   if (ratio < 0.7) return 35;
@@ -105,6 +106,7 @@ function calcScore(
   pe: number | null,
   fairPE: number,
   peEstimated: boolean,
+  unprofitable: boolean,
 ) {
   if (!price || price <= 0 || !high52 || !low52 || high52 <= low52) {
     return null;
@@ -117,7 +119,7 @@ function calcScore(
   const midpoint   = (high52 + low52) / 2;
   const pctDiff    = parseFloat(((price - midpoint) / midpoint * 100).toFixed(2));
 
-  const valueScore = calcValueScore(pe, fairPE, peEstimated);
+  const valueScore = calcValueScore(pe, fairPE, peEstimated, unprofitable);
 
   const recovery  = (price - low52) / low52 * 100;
   const momScore  = recovery > 40 ? 25 : recovery > 20 ? 20 : recovery > 8 ? 15 : recovery > 2 ? 8 : 3;
@@ -201,14 +203,15 @@ export async function GET(req: NextRequest) {
       const q  = quotesMap[w.ticker];
       const pm = peMap[w.ticker];
       if (!q || !pm) return null;
-      const result = calcScore(q.price, q.high52, q.low52, pm.pe, pm.fairPE, pm.peEstimated);
+      const result = calcScore(q.price, q.high52, q.low52, pm.pe, pm.fairPE, pm.peEstimated, pm.unprofitable);
       if (!result) return null;
       return {
         ...w, ...result,
-        pe:          pm.pe,
-        fairPE:      pm.fairPE,
-        sector:      pm.sector,
-        peEstimated: pm.peEstimated,
+        pe:           pm.pe,
+        fairPE:       pm.fairPE,
+        sector:       pm.sector,
+        peEstimated:  pm.peEstimated,
+        unprofitable: pm.unprofitable,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -248,7 +251,7 @@ export async function GET(req: NextRequest) {
       region:    x.region,
       score:     x.total,
       signal:    x.signal as MarketStockSignal["signal"],
-      meta:      { ma200Diff: x.pctDiff, mom3m: x.mom3m, pe: x.pe, fairPE: x.fairPE, sector: x.sector, peEstimated: x.peEstimated },
+      meta:      { ma200Diff: x.pctDiff, mom3m: x.mom3m, pe: x.pe, fairPE: x.fairPE, sector: x.sector, peEstimated: x.peEstimated, unprofitable: x.unprofitable },
       factors:   x.factors,
       reasoning: reasonings[x.ticker] ?? null,
     };

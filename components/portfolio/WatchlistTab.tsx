@@ -316,7 +316,14 @@ export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
         let peNode: React.ReactNode = null;
         if (sig?.meta) {
           const { pe, fairPE } = sig.meta;
-          if (pe === null || pe === undefined) {
+          const unprofitable = sig.meta.unprofitable ?? false;
+          if (unprofitable) {
+            peNode = (
+              <p className="text-xs" style={{ color: "#F87171" }}>
+                {t("Currently unprofitable (negative earnings)", "Attualmente in perdita (utili negativi)")}
+              </p>
+            );
+          } else if (pe === null || pe === undefined) {
             peNode = (
               <p className="text-xs" style={{ color: "#64748B" }}>
                 {t("No P/E data (ETF / index)", "P/E non disponibile (ETF / indice)")}

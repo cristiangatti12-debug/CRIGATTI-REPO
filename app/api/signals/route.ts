@@ -13,9 +13,11 @@ export const maxDuration = 30;
 // Momentum (25 pts): Has it been moving the right way? — 3-month return proxy
 
 // Value sub-score from live P/E vs sector fair P/E. When the P/E is estimated
-// (no live data) or unavailable, return a neutral 17 so approximations don't
-// penalize the score.
-function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean): number {
+// (no live data), return neutral 17 so approximations don't penalize. When
+// the company is unprofitable (negative trailing earnings) return 5 — low but
+// not zero, since recovery is possible.
+function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean, unprofitable: boolean): number {
+  if (unprofitable) return 5;
   if (pe === null || peEstimated || fairPE <= 0) return 17;
   const ratio = pe / fairPE;
   if (ratio < 0.7) return 35;
@@ -33,6 +35,7 @@ function calcScore(
   pe: number | null,
   fairPE: number,
   peEstimated: boolean,
+  unprofitable: boolean,
 ): {
   total: number; signal: "BUY" | "HOLD" | "SELL";
   trend: number; value: number; momentum: number;
@@ -44,7 +47,7 @@ function calcScore(
   const midpoint = (high52 + low52) / 2;
   const pctDiff  = parseFloat(((price - midpoint) / midpoint * 100).toFixed(2));
   const trendScore = pos > 0.75 ? 40 : pos > 0.60 ? 32 : pos > 0.45 ? 24 : pos > 0.30 ? 10 : 0;
-  const valueScore = calcValueScore(pe, fairPE, peEstimated);
+  const valueScore = calcValueScore(pe, fairPE, peEstimated, unprofitable);
   const recovery   = (price - low52) / low52 * 100;
   const momScore   = recovery > 40 ? 25 : recovery > 20 ? 20 : recovery > 8 ? 15 : recovery > 2 ? 8 : 3;
   const mom3m      = parseFloat((recovery / 4).toFixed(2));
@@ -191,15 +194,16 @@ export async function GET(req: NextRequest) {
       const td     = tickerData[i];
       const peMeta = peData[i];
       const result = td
-        ? calcScore(td.price, td.high52, td.low52, peMeta.pe, peMeta.fairPE, peMeta.peEstimated)
+        ? calcScore(td.price, td.high52, td.low52, peMeta.pe, peMeta.fairPE, peMeta.peEstimated, peMeta.unprofitable)
         : null;
       return {
         ticker,
         result,
-        pe:          peMeta.pe,
-        fairPE:      peMeta.fairPE,
-        sector:      peMeta.sector,
-        peEstimated: peMeta.peEstimated,
+        pe:           peMeta.pe,
+        fairPE:       peMeta.fairPE,
+        sector:       peMeta.sector,
+        peEstimated:  peMeta.peEstimated,
+        unprofitable: peMeta.unprofitable,
       };
     });
 
@@ -235,12 +239,13 @@ export async function GET(req: NextRequest) {
             momentum: c.result.momentum,
           } : null,
           meta: c.result ? {
-            ma200Diff:   c.result.pctDiff,
-            mom3m:       c.result.mom3m,
-            pe:          c.pe,
-            fairPE:      c.fairPE,
-            sector:      c.sector,
-            peEstimated: c.peEstimated,
+            ma200Diff:    c.result.pctDiff,
+            mom3m:        c.result.mom3m,
+            pe:           c.pe,
+            fairPE:       c.fairPE,
+            sector:       c.sector,
+            peEstimated:  c.peEstimated,
+            unprofitable: c.unprofitable,
           } : null,
           analyst:   analysts[i] ?? null,
           reasoning: reasonings[ticker] ?? null,

@@ -235,8 +235,9 @@ export interface PERatioResult {
   pe:           number | null;
   fairPE:       number;
   sector:       string;
-  source:       "live-fmp" | "live-yf-quote" | "live-yf-summary" | "live-av" | "estimated" | "unavailable";
+  source:       "live-fmp" | "live-yf-quote" | "live-yf-summary" | "live-av" | "live-finnhub" | "estimated" | "unavailable" | "unprofitable";
   peEstimated:  boolean;
+  unprofitable: boolean;
 }
 
 function saneTrailingPE(v: unknown): number | null {
@@ -269,9 +270,14 @@ function logFMPMiss(endpoint: string, ticker: string, status: number, body: unkn
 // under quota and gives every user the same number through the trading day.
 const PE_CACHE_SECONDS = 86400;
 
-async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
+// Result from FMP: a positive pe, null (no data), or an unprofitable signal
+// (FMP returned a negative trailing P/E, meaning the company has negative
+// earnings — trailing P/E is not a meaningful number in finance).
+interface FMPPELookup { pe: number | null; unprofitable: boolean }
+
+async function fetchFMPQuotePE(ticker: string): Promise<FMPPELookup> {
   const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
-  if (!FMP_KEY) return null;
+  if (!FMP_KEY) return { pe: null, unprofitable: false };
 
   // Primary: /stable/ratios-ttm — priceToEarningsRatioTTM (note the "To").
   // This is the only FMP endpoint that returns trailing P/E on the post-Aug-2025
@@ -281,8 +287,10 @@ async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
     const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
     const json = res.ok ? await res.json() : null;
     const r = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    const pe = saneTrailingPE(r?.priceToEarningsRatioTTM ?? r?.priceEarningsRatioTTM ?? r?.peRatioTTM);
-    if (pe) return pe;
+    const raw = r?.priceToEarningsRatioTTM ?? r?.priceEarningsRatioTTM ?? r?.peRatioTTM;
+    if (typeof raw === "number" && raw < 0) return { pe: null, unprofitable: true };
+    const pe = saneTrailingPE(raw);
+    if (pe) return { pe, unprofitable: false };
     // 402 on /stable/* means the symbol is on a paid tier (typical for EU
     // tickers on the free plan) — don't bother logging that path.
     if (res.status !== 402) logFMPMiss("/stable/ratios-ttm", ticker, res.status, json);
@@ -296,14 +304,36 @@ async function fetchFMPQuotePE(ticker: string): Promise<number | null> {
     const json = res.ok ? await res.json() : null;
     const m = Array.isArray(json) && json.length > 0 ? json[0] : null;
     const direct = saneTrailingPE(m?.peRatioTTM ?? m?.priceToEarningsRatioTTM);
-    if (direct) return direct;
+    if (direct) return { pe: direct, unprofitable: false };
     const yieldTTM = typeof m?.earningsYieldTTM === "number" ? m.earningsYieldTTM : null;
+    if (yieldTTM !== null && yieldTTM < 0) return { pe: null, unprofitable: true };
     const inverted = yieldTTM && yieldTTM > 0 ? saneTrailingPE(1 / yieldTTM) : null;
-    if (inverted) return inverted;
+    if (inverted) return { pe: inverted, unprofitable: false };
     if (res.status !== 402) logFMPMiss("/stable/key-metrics-ttm", ticker, res.status, json);
   } catch (e) { console.warn(`[vela] FMP /stable/key-metrics-ttm ${ticker} threw: ${(e as Error).message}`); }
 
-  return null;
+  return { pe: null, unprofitable: false };
+}
+
+// Finnhub — 60 calls/min free tier, covers US + EU exchanges. Used as
+// fallback after FMP so we save FMP free-tier quota for the primary path.
+async function fetchFinnhubPE(ticker: string): Promise<FMPPELookup> {
+  const FINNHUB_KEY = (process.env.FINNHUB_API_KEY ?? "").trim();
+  if (!FINNHUB_KEY) return { pe: null, unprofitable: false };
+  try {
+    const url = `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${FINNHUB_KEY}`;
+    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
+    if (!res.ok) return { pe: null, unprofitable: false };
+    const json = await res.json();
+    const m = json?.metric;
+    if (!m) return { pe: null, unprofitable: false };
+    const raw = m.peTTM ?? m.peExclExtraTTM ?? m.peExclExtraAnnual ?? m.peAnnual;
+    if (typeof raw === "number" && raw < 0) return { pe: null, unprofitable: true };
+    return { pe: saneTrailingPE(raw), unprofitable: false };
+  } catch (e) {
+    console.warn(`[vela] Finnhub ${ticker} threw: ${(e as Error).message}`);
+    return { pe: null, unprofitable: false };
+  }
 }
 
 async function fetchYFQuoteSummaryPE(ticker: string): Promise<number | null> {
@@ -355,14 +385,17 @@ async function fetchAlphaVantagePE(ticker: string): Promise<number | null> {
 
 /**
  * Resolve a trailing P/E for the given ticker, walking a fallback chain:
- *   1. FMP /api/v3/quote (US + EU, 250/day free tier) — primary live source
- *   2. Yahoo v10 quoteSummary (US) or v7 quote (EU) — usually 401 from Vercel
- *   3. Alpha Vantage OVERVIEW (US, 25/day free tier) — last live attempt
- *   4. Hardcoded estimate (EU approx map / sector default) — peEstimated = true
+ *   1. FMP /stable/ratios-ttm  (US works, EU 402 on free tier)
+ *   2. Finnhub /stock/metric   (US + EU, 60/min free tier)
+ *   3. Yahoo v10/v7            (usually 401 from Vercel IPs)
+ *   4. Alpha Vantage OVERVIEW  (US-only, 25/day free tier)
+ *   5. Hardcoded estimate      (peEstimated = true)
  *
- * Logs a single console.warn per ticker when all live sources fail, so Vercel
- * runtime logs surface upstream provider outages without dumping payloads.
- * Always returns sector + fairPE. ETFs return { pe: null, source: "unavailable" }.
+ * Detects unprofitable companies (negative trailing P/E from FMP or Finnhub)
+ * and short-circuits the chain — a negative P/E is a definitive signal that
+ * cannot be "fixed" by trying another source.
+ *
+ * Always returns sector + fairPE. ETFs → source "unavailable".
  */
 export async function getPERatio(ticker: string): Promise<PERatioResult> {
   const key      = baseTicker(ticker);
@@ -371,36 +404,47 @@ export async function getPERatio(ticker: string): Promise<PERatioResult> {
 
   // ETFs / passive vehicles don't have a meaningful P/E.
   if (ETF_TICKERS.has(key)) {
-    return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false };
+    return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false, unprofitable: false };
   }
 
+  // 1. FMP — covers US on the free tier.
+  const fmp = await fetchFMPQuotePE(ticker);
+  if (fmp.unprofitable) {
+    return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+  }
+  if (fmp.pe) {
+    return { pe: fmp.pe, fairPE, sector, source: "live-fmp", peEstimated: false, unprofitable: false };
+  }
+
+  // 2. Finnhub — covers EU + US backup.
+  const fin = await fetchFinnhubPE(ticker);
+  if (fin.unprofitable) {
+    return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+  }
+  if (fin.pe) {
+    return { pe: fin.pe, fairPE, sector, source: "live-finnhub", peEstimated: false, unprofitable: false };
+  }
+
+  // 3. Yahoo Finance — usually 401 from Vercel IPs since late 2025 but cheap to try.
   const isInternational = EU_SUFFIX.test(ticker);
-
-  // 1. FMP — works for both US and EU, 10× the AV free-tier rate limit.
-  const fmpPE = await fetchFMPQuotePE(ticker);
-  if (fmpPE) return { pe: fmpPE, fairPE, sector, source: "live-fmp", peEstimated: false };
-
-  // 2. Yahoo Finance — usually 401 from Vercel IPs since late 2025 but cheap to try.
   if (isInternational) {
     const v7 = await fetchYFV7QuotePE(ticker);
-    if (v7) return { pe: v7, fairPE, sector, source: "live-yf-quote", peEstimated: false };
+    if (v7) return { pe: v7, fairPE, sector, source: "live-yf-quote", peEstimated: false, unprofitable: false };
   } else {
     const yfPE = await fetchYFQuoteSummaryPE(ticker);
-    if (yfPE) return { pe: yfPE, fairPE, sector, source: "live-yf-summary", peEstimated: false };
-    // 3. Alpha Vantage — US-only, free tier is 25 calls/day.
+    if (yfPE) return { pe: yfPE, fairPE, sector, source: "live-yf-summary", peEstimated: false, unprofitable: false };
+    // 4. Alpha Vantage — US-only, free tier is 25 calls/day.
     const avPE = await fetchAlphaVantagePE(ticker);
-    if (avPE) return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false };
+    if (avPE) return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false, unprofitable: false };
   }
 
-  // 4. Final fallback — hardcoded estimate (EU approx map first, then sector default).
-  // Single warn line so Vercel logs reveal which tickers couldn't get a live P/E.
+  // 5. Final fallback — hardcoded estimate (EU approx map first, then sector default).
   console.warn(`[vela] getPERatio: no live P/E for ${ticker} — using estimate`);
   const euApprox = EU_APPROX_PE[key];
   const estimate = euApprox && euApprox > 0 ? euApprox : fairPE;
   if (estimate > 0) {
-    return { pe: estimate, fairPE, sector, source: "estimated", peEstimated: true };
+    return { pe: estimate, fairPE, sector, source: "estimated", peEstimated: true, unprofitable: false };
   }
 
-  // 4. No estimate available (e.g. ETF without entry in ETF_TICKERS, sector unknown).
-  return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false };
+  return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false, unprofitable: false };
 }

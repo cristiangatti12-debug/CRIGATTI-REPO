@@ -517,6 +517,7 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
         ctx: (() => {
           if (noPort||!primSig?.meta) return t("Add holdings to see a real P/E example.","Aggiungi titoli per vedere un esempio P/E reale.");
           const pe=primSig.meta.pe; const fp=primSig.meta.fairPE; const sec=primSig.meta.sector||t("this sector","questo settore");
+          if(primSig.meta.unprofitable) return <span><strong style={{color:"white"}}>{primary!.ticker}</strong> {t("is currently unprofitable — P/E is not meaningful when earnings are negative.","è attualmente in perdita — il P/E non è significativo con utili negativi.")}</span>;
           if(pe===null) return t("No P/E data for this holding (ETF or index fund).","Nessun dato P/E per questo titolo (ETF o fondo indice).");
           return <span><strong style={{color:"white"}}>{primary!.ticker}</strong> P/E: <strong style={{color:"white"}}>{fmt(pe,1)}x</strong> vs sector fair P/E <strong style={{color:"white"}}>{fp}x</strong> ({sec}) → {pe<fp?t("potentially undervalued","potenzialmente sottovalutato"):t("trading at a premium","tratta a premio")}.</span>;
         })(),

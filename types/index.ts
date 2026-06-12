@@ -95,7 +95,7 @@ export interface TickerSignal {
   score:     number | null;
   signal:    Signal;
   factors:   { trend: number; value: number; momentum: number } | null;
-  meta:      { ma200Diff: number; mom3m: number; pe: number | null; fairPE: number; sector: string; peEstimated?: boolean } | null;
+  meta:      { ma200Diff: number; mom3m: number; pe: number | null; fairPE: number; sector: string; peEstimated?: boolean; unprofitable?: boolean } | null;
   analyst: {
     label: string;               // "STRONG BUY" | "BUY" | "HOLD" | "SELL"
     strongBuy: number; buy: number; hold: number; sell: number; strongSell: number;
@@ -121,12 +121,13 @@ export interface MarketStockSignal {
   score:     number;
   signal:    Signal;
   meta: {
-    ma200Diff:   number;          // % above/below 200-day MA
-    mom3m:       number;          // 3-month price return %
-    pe:          number | null;   // trailing or forward PE (null = ETF/unknown)
-    fairPE:      number;          // sector fair PE benchmark
-    sector:      string;          // sector label
-    peEstimated: boolean;         // true when using hardcoded fallback PE
+    ma200Diff:    number;          // % above/below 200-day MA
+    mom3m:        number;          // 3-month price return %
+    pe:           number | null;   // trailing or forward PE (null = ETF/unprofitable/unknown)
+    fairPE:       number;          // sector fair PE benchmark
+    sector:       string;          // sector label
+    peEstimated:  boolean;         // true when using hardcoded fallback PE
+    unprofitable: boolean;         // true when company has negative trailing earnings
   };
   factors: {
     trend:     number;   // 0–40 (200MA trend)
