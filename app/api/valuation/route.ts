@@ -409,7 +409,11 @@ export async function GET(req: NextRequest) {
   if (!isETF) {
     try {
       const peLookup = await getPERatio(ticker);
-      if (peLookup.pe !== null && peLookup.pe > 0) {
+      if (peLookup.unprofitable) {
+        // Hide the "current P/E" badge in the simple card so the
+        // unprofitable note isn't paired with a misleading positive ratio.
+        trailingPE = 0;
+      } else if (peLookup.pe !== null && peLookup.pe > 0) {
         trailingPE = peLookup.pe;
         // For EU stocks EPS is derived from trailingPE; recompute when we
         // get a fresher P/E than the EU_APPROX_PE estimate used above.
