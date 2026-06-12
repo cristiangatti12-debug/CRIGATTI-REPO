@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getQuote } from "@/lib/marketData";
-import { AV_SECTOR, EU_APPROX_PE } from "@/lib/peMaps";
+import { getQuote, getPERatio } from "@/lib/marketData";
+import { AV_SECTOR, EU_APPROX_PE, resolveSector, baseTicker as stripSuffix } from "@/lib/peMaps";
 
 export const dynamic = "force-dynamic";
 
@@ -217,22 +217,21 @@ export async function GET(req: NextRequest) {
   let fmpIncome:  any = null;
 
   if (isInternational && FMP_KEY) {
-    // FMP stable profile is free for EU stocks; financial statements require paid plan.
-    // We fetch only the profile (name, sector, marketCap, isEtf) and derive EPS from
-    // hardcoded approximate PE ratios stored in EU_APPROX_PE.
+    // FMP /stable/profile used to be free for EU symbols but is now paywalled
+    // on the post-Aug-2025 free tier (returns 402 Premium). When it fails we
+    // synthesize a minimal profile from peMaps + passedPrice so the valuation
+    // still renders with the same trailingPE that /api/signals shows.
     const raw = await fetch(
       `https://financialmodelingprep.com/stable/profile?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`
     ).then(r => r.json()).catch(() => null);
     fmpProfile = Array.isArray(raw) && raw.length > 0 ? raw[0] : null;
   }
 
-  const hasFMP = !!fmpProfile?.symbol;
-
   // For EU stocks: use getQuote (query2 v7) which is reliable from Vercel IPs.
   // Returns bookValue, enterpriseValue, evToEbitda, eps, marketCap.
   // sharesOutstanding is derived from marketCap / price when not directly available.
   let yfQuoteEU: any = null;
-  if (isInternational && hasFMP) {
+  if (isInternational) {
     try {
       const quote = await getQuote(ticker);
       yfQuoteEU = {
@@ -248,7 +247,28 @@ export async function GET(req: NextRequest) {
     } catch {}
   }
 
-  // International + no FMP data (key missing or ticker unknown) → unavailable
+  // If FMP profile is missing, synthesize a minimal one so the EU pipeline
+  // can still produce a valuation card. Need at least a sector for the
+  // SECTOR_DEFAULTS lookup and a price for share/EPS derivation.
+  if (isInternational && !fmpProfile?.symbol) {
+    const sectorFromMap = resolveSector(ticker);
+    if (sectorFromMap || passedPrice > 0) {
+      fmpProfile = {
+        symbol:      ticker,
+        companyName: ticker,
+        sector:      sectorFromMap,
+        isEtf:       false,
+        isFund:      false,
+        marketCap:   yfQuoteEU?.marketCap ?? 0,
+        price:       passedPrice,
+      };
+    }
+  }
+
+  const hasFMP = !!fmpProfile?.symbol;
+
+  // Truly no data — neither FMP profile nor the peMaps fallback nor a passed
+  // price — only then give up.
   if (isInternational && !hasFMP) {
     return NextResponse.json({ error: "international_unavailable" }, { status: 422 });
   }
@@ -307,19 +327,19 @@ export async function GET(req: NextRequest) {
 
   if (hasFMP) {
     // ── FMP source (international stocks) ──────────────────────────────────────
-    // FMP stable profile is free for EU stocks but does NOT include EPS, PE, FCF,
-    // EBITDA or book value (those require a paid plan). We derive EPS from hardcoded
-    // approximate PE ratios so that the P/E and DCF(EPS-proxy) models still work.
+    // FMP stable profile is paywalled on free tier — when missing we already
+    // synthesized a minimal profile above. EPS, FCF, EBITDA and book value
+    // are paid-only too, so we derive EPS from the trailing PE that
+    // getPERatio returns (same source as /api/signals → Analysis tab and
+    // Portfolio always agree).
     name        = fmpProfile.companyName ?? ticker;
     const fmpSec = fmpProfile.sector ?? "";
-    sector      = SECTOR_DEFAULTS[fmpSec] ? fmpSec : "";
+    sector      = SECTOR_DEFAULTS[fmpSec] ? fmpSec : resolveSector(ticker);
     isETF       = fmpProfile.isEtf === true || fmpProfile.isFund === true;
     marketCap   = fmpProfile.marketCap ?? 0;
     const fmpPrice_ = passedPrice > 0 ? passedPrice : (fmpProfile.price ?? 0);
     shares      = marketCap > 0 && fmpPrice_ > 0 ? Math.round(marketCap / fmpPrice_) : 0;
-    // Derive EPS from hardcoded approximate PE × price (best we can do without paid financial data)
-    const baseTicker = ticker.replace(/\.[A-Z]+$/i, "").toUpperCase();
-    trailingPE  = EU_APPROX_PE[baseTicker] ?? 0;
+    trailingPE  = EU_APPROX_PE[stripSuffix(ticker)] ?? 0;
     eps         = trailingPE > 0 && fmpPrice_ > 0 ? parseFloat((fmpPrice_ / trailingPE).toFixed(4)) : 0;
     // Supplement with Yahoo Finance v7/quote fundamentals (works for EU tickers from Vercel)
     const yfBV      = typeof yfQuoteEU?.bookValue            === "number" ? yfQuoteEU.bookValue            : 0;
@@ -379,6 +399,25 @@ export async function GET(req: NextRequest) {
     opCF        = n(cf0["operatingCashflow"]);
     capex       = Math.abs(n(cf0["capitalExpenditures"]));
     fcf         = cfOk && opCF > 0 ? Math.max(0, opCF - capex) : 0;
+  }
+
+  // Unify trailing P/E with /api/signals: getPERatio is the single source of
+  // truth (FMP → Finnhub → YF → AV → estimate). When it returns a live value,
+  // override whatever the source above produced so the Analysis tab and the
+  // Portfolio cards always show the same number. Preserve the source value
+  // when getPERatio has nothing (e.g. unprofitable companies return null pe).
+  if (!isETF) {
+    try {
+      const peLookup = await getPERatio(ticker);
+      if (peLookup.pe !== null && peLookup.pe > 0) {
+        trailingPE = peLookup.pe;
+        // For EU stocks EPS is derived from trailingPE; recompute when we
+        // get a fresher P/E than the EU_APPROX_PE estimate used above.
+        if (hasFMP && passedPrice > 0) {
+          eps = parseFloat((passedPrice / trailingPE).toFixed(4));
+        }
+      }
+    } catch { /* keep source-provided trailingPE */ }
   }
 
   // Price: use what the component passed in; fall back to market-cap / shares

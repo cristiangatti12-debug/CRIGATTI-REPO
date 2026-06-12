@@ -1202,7 +1202,7 @@ export default function Home() {
   useEffect(() => {
     try {
       Object.keys(localStorage)
-        .filter(k => /^vela_signals_v[1-9]_/.test(k) || /^vela_market_v[1-8]_/.test(k) || /^vela_val_v[1-5]_/.test(k))
+        .filter(k => /^vela_signals_v[1-9]_/.test(k) || /^vela_market_v[1-8]_/.test(k) || /^vela_val_v[1-6]_/.test(k))
         .forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);
