@@ -5,7 +5,7 @@ import type { TickerSignal, WatchlistItem } from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const STORAGE_KEY = "vela_watchlist_v1";
-const SIG_CACHE   = "vela_wl_signals_v3";
+const SIG_CACHE   = "vela_wl_signals_v4";
 
 const SIGNAL_STYLE: Record<string, { bg: string; color: string }> = {
   BUY:  { bg: "#DCFCE7", color: "#16A34A" },

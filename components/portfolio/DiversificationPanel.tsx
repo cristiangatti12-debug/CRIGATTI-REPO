@@ -75,7 +75,7 @@ const SECTOR_COLORS: Record<string, string> = {
 function getSector(ticker: string): string {
   const key = ticker.toUpperCase();
   // Try full cache first, then simple cache
-  for (const cacheKey of [`vela_val_v7_${key}`, `vela_val_v7_simple_${key}`]) {
+  for (const cacheKey of [`vela_val_v8_${key}`, `vela_val_v8_simple_${key}`]) {
     try {
       const raw = localStorage.getItem(cacheKey);
       if (raw) {

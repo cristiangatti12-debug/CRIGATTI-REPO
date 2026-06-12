@@ -279,40 +279,73 @@ async function fetchFMPQuotePE(ticker: string): Promise<FMPPELookup> {
   const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
   if (!FMP_KEY) return { pe: null, unprofitable: false };
 
-  // Primary: /stable/ratios-ttm — priceToEarningsRatioTTM (note the "To").
-  // This is the only FMP endpoint that returns trailing P/E on the post-Aug-2025
-  // free plan; the older /api/v3/quote returns 403 Legacy for new keys.
-  try {
-    const url = `https://financialmodelingprep.com/stable/ratios-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
-    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
-    const json = res.ok ? await res.json() : null;
-    const r = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    const raw = r?.priceToEarningsRatioTTM ?? r?.priceEarningsRatioTTM ?? r?.peRatioTTM;
-    if (typeof raw === "number" && raw < 0) return { pe: null, unprofitable: true };
-    const pe = saneTrailingPE(raw);
-    if (pe) return { pe, unprofitable: false };
-    // 402 on /stable/* means the symbol is on a paid tier (typical for EU
-    // tickers on the free plan) — don't bother logging that path.
-    if (res.status !== 402) logFMPMiss("/stable/ratios-ttm", ticker, res.status, json);
-  } catch (e) { console.warn(`[vela] FMP /stable/ratios-ttm ${ticker} threw: ${(e as Error).message}`); }
+  // Fetch both endpoints in parallel and cross-check. FMP's two TTM endpoints
+  // occasionally disagree about profitability (INTC was the trigger: ratios-ttm
+  // reported priceToEarningsRatioTTM=22.6 while key-metrics-ttm reported a
+  // negative earningsYieldTTM at the same time). If EITHER signal says
+  // unprofitable we trust the conservative read so investors aren't shown a
+  // misleading positive P/E next to a "negative EPS" note in Analysis.
+  const ratiosUrl  = `https://financialmodelingprep.com/stable/ratios-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
+  const metricsUrl = `https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
 
-  // Backup: invert earningsYieldTTM from /stable/key-metrics-ttm.
-  // Some tickers expose earnings yield but not the direct P/E field.
-  try {
-    const url = `https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`;
-    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
-    const json = res.ok ? await res.json() : null;
-    const m = Array.isArray(json) && json.length > 0 ? json[0] : null;
-    const direct = saneTrailingPE(m?.peRatioTTM ?? m?.priceToEarningsRatioTTM);
-    if (direct) return { pe: direct, unprofitable: false };
-    const yieldTTM = typeof m?.earningsYieldTTM === "number" ? m.earningsYieldTTM : null;
-    if (yieldTTM !== null && yieldTTM < 0) return { pe: null, unprofitable: true };
-    const inverted = yieldTTM && yieldTTM > 0 ? saneTrailingPE(1 / yieldTTM) : null;
-    if (inverted) return { pe: inverted, unprofitable: false };
-    if (res.status !== 402) logFMPMiss("/stable/key-metrics-ttm", ticker, res.status, json);
-  } catch (e) { console.warn(`[vela] FMP /stable/key-metrics-ttm ${ticker} threw: ${(e as Error).message}`); }
+  const [ratiosRes, metricsRes] = await Promise.all([
+    fetch(ratiosUrl,  { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit).catch((e: unknown) => {
+      console.warn(`[vela] FMP /stable/ratios-ttm ${ticker} threw: ${(e as Error).message}`);
+      return null;
+    }),
+    fetch(metricsUrl, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit).catch((e: unknown) => {
+      console.warn(`[vela] FMP /stable/key-metrics-ttm ${ticker} threw: ${(e as Error).message}`);
+      return null;
+    }),
+  ]);
 
+  let ratiosBody:  unknown = null;
+  let metricsBody: unknown = null;
+  try { if (ratiosRes  && ratiosRes.ok)  ratiosBody  = await ratiosRes.json();  } catch {}
+  try { if (metricsRes && metricsRes.ok) metricsBody = await metricsRes.json(); } catch {}
+
+  const r = Array.isArray(ratiosBody)  && ratiosBody.length  > 0 ? (ratiosBody  as Array<Record<string, unknown>>)[0] : null;
+  const m = Array.isArray(metricsBody) && metricsBody.length > 0 ? (metricsBody as Array<Record<string, unknown>>)[0] : null;
+
+  const peRaw    = r?.priceToEarningsRatioTTM ?? r?.priceEarningsRatioTTM ?? r?.peRatioTTM
+                ?? m?.peRatioTTM ?? m?.priceToEarningsRatioTTM;
+  const yieldTTM = typeof m?.earningsYieldTTM === "number" ? (m.earningsYieldTTM as number) : null;
+
+  // Profitability signals — conservative OR: any negative wins.
+  const peNegative    = typeof peRaw === "number" && peRaw < 0;
+  const yieldNegative = yieldTTM !== null && yieldTTM < 0;
+  if (peNegative || yieldNegative) return { pe: null, unprofitable: true };
+
+  // No negative signal → take the first sane positive PE we can derive.
+  const pe = saneTrailingPE(peRaw)
+          ?? (yieldTTM && yieldTTM > 0 ? saneTrailingPE(1 / yieldTTM) : null);
+  if (pe) return { pe, unprofitable: false };
+
+  // Both endpoints came back empty (or 402 Premium for EU on free tier).
+  // 402 is expected and not worth logging; everything else gets a warn line.
+  if (ratiosRes  && ratiosRes.status  !== 402 && !r) logFMPMiss("/stable/ratios-ttm",     ticker, ratiosRes.status,  ratiosBody);
+  if (metricsRes && metricsRes.status !== 402 && !m) logFMPMiss("/stable/key-metrics-ttm", ticker, metricsRes.status, metricsBody);
   return { pe: null, unprofitable: false };
+}
+
+// US-only profitability backup. When the FMP path returns no data (typical
+// for newer or specialized listings — SNOW was the trigger) we query Alpha
+// Vantage's OVERVIEW for the EPS sign. Negative EPS → unprofitable, so
+// /api/signals can render "Currently unprofitable" instead of falling to
+// the neutral sector estimate and disagreeing with the Analysis tab.
+async function fetchAlphaVantageEPSSign(ticker: string): Promise<boolean | null> {
+  const AV_KEY = (process.env.AV_API_KEY ?? "").trim();
+  if (!AV_KEY) return null;
+  try {
+    const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${AV_KEY}`;
+    const res = await fetch(url, { next: { revalidate: PE_CACHE_SECONDS } } as RequestInit);
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.Note || json?.Information) return null;
+    const eps = parseFloat(json?.EPS ?? "");
+    if (!isFinite(eps)) return null;
+    return eps < 0;
+  } catch { return null; }
 }
 
 // Finnhub — 60 calls/min free tier, covers US + EU exchanges. Used as
@@ -438,7 +471,20 @@ export async function getPERatio(ticker: string): Promise<PERatioResult> {
     if (avPE) return { pe: avPE, fairPE, sector, source: "live-av", peEstimated: false, unprofitable: false };
   }
 
-  // 5. Final fallback — hardcoded estimate (EU approx map first, then sector default).
+  // 5. US-only profitability backup before the estimate fallback. When no live
+  // P/E source returned anything for a US ticker (typical for newer or
+  // specialized listings — SNOW was the trigger), check Alpha Vantage's EPS
+  // sign before defaulting to a "neutral" sector estimate. This prevents the
+  // Portfolio tab from showing a neutral Value score while the Analysis tab
+  // independently reports the company as unprofitable.
+  if (!isInternational) {
+    const avUnprofitable = await fetchAlphaVantageEPSSign(ticker);
+    if (avUnprofitable === true) {
+      return { pe: null, fairPE, sector, source: "unprofitable", peEstimated: false, unprofitable: true };
+    }
+  }
+
+  // 6. Final fallback — hardcoded estimate (EU approx map first, then sector default).
   console.warn(`[vela] getPERatio: no live P/E for ${ticker} — using estimate`);
   const euApprox = EU_APPROX_PE[key];
   const estimate = euApprox && euApprox > 0 ? euApprox : fairPE;
