@@ -59,8 +59,11 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Run on all routes except api routes, auth callback, static assets,
-    // and common image files. /auth/callback must not be intercepted —
-    // the callback runs its own session exchange.
-    "/((?!api|auth|_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // and public root files (sw.js, manifest.json, images). /auth/callback
+    // must not be intercepted — the callback runs its own session exchange.
+    // sw.js / manifest.json must not redirect to /login or the browser
+    // fails service-worker registration and PWA manifest parsing, which
+    // surfaces in some browsers as "Impossibile caricare la pagina".
+    "/((?!api|auth|_next/static|_next/image|favicon\\.ico|sw\\.js|manifest\\.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest|txt|xml)$).*)",
   ],
 };
