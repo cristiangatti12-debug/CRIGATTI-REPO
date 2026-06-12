@@ -325,7 +325,7 @@ RLS enabled on both tables — users can only read/write their own rows.
 - [ ] Market opportunities panel: animated score bars
 
 ### Later
-- [ ] Premium paywall implementation (Stripe)
+- [x] Premium paywall implementation (Stripe) — subscriptions table + checkout + portal + webhook + UI gate
 - [ ] SELL signal fix (fundamental overlay)
 - [ ] More crypto coins
 - [ ] Broker API integrations (Open Banking)
@@ -352,6 +352,19 @@ RLS enabled on both tables — users can only read/write their own rows.
 - `GOOGLE_AI_API_KEY` — optional Gemini key for AI fallback chain (allocation, digest, news sentiment).
 - `ANTHROPIC_API_KEY` — optional, enables Claude in the allocation model chain.
 - `NEXT_PUBLIC_SITE_URL` — pin Supabase email confirmation links to the production origin (prevents preview-deploy signups from getting blocked by the redirect allowlist).
+
+**Stripe (Premium tier):**
+- `STRIPE_SECRET_KEY` — Stripe secret key (server-only).
+- `STRIPE_WEBHOOK_SECRET` — Stripe webhook signing secret for `/api/stripe/webhook`.
+- `NEXT_PUBLIC_STRIPE_PRICE_MONTHLY` — Stripe Price ID for the €9.99/mo plan (e.g. `price_xxx`). Exposed to client so the checkout button can pass it.
+- `STRIPE_PRICE_ANNUAL` — Stripe Price ID for the €89/yr plan (server-only, optional).
+
+**Setup checklist for Stripe:**
+1. Create product "Vela Premium" in Stripe dashboard → add Monthly (€9.99) and Annual (€89) prices.
+2. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PRICE_MONTHLY` in Vercel.
+3. Apply migration `supabase/migrations/20260620_subscriptions.sql` to production.
+4. Add Stripe webhook endpoint `https://vela-ai-two.vercel.app/api/stripe/webhook` in Stripe dashboard → listen for `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+5. Configure Stripe Customer Portal at dashboard.stripe.com/settings/billing/portal.
 
 **TypeScript check before deploy:** `npx tsc --noEmit`
 

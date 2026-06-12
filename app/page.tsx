@@ -879,6 +879,7 @@ export default function Home() {
   const [profileSubject,     setProfileSubject]     = useState<string | null>(null);
   const [tickerDetail,       setTickerDetail]       = useState<{ ticker: string; name: string } | null>(null);
   const [showAllCommunity,   setShowAllCommunity]   = useState(false);
+  const [isPremium,          setIsPremium]          = useState(false);
 
   // Lazy initializer reads localStorage immediately (client-only) — no flash
   const [appLang] = useState<Lang>(() =>
@@ -1156,6 +1157,11 @@ export default function Home() {
       rememberUid(u.id);
       setUserEmail(u.email ?? "");
       setJoinDate(u.created_at ?? "");
+      // Load subscription status (non-blocking — UI updates when it resolves)
+      fetch("/api/subscription/status")
+        .then(r => r.ok ? r.json() : { premium: false })
+        .then(d => setIsPremium(!!d.premium))
+        .catch(() => {});
       // display_name from user_metadata (set at signup), fall back to email prefix
       const name = (u.user_metadata?.display_name as string | undefined)
         ?? u.email?.split("@")[0]
@@ -1962,8 +1968,9 @@ export default function Home() {
                   a.ticker.toUpperCase() === freeExcelTicker ? -1 : 0
                 );
                 return sorted.map(h => {
-                  const isFree  = h.ticker.toUpperCase() === freeExcelTicker;
-                  // Simple cards: batch of 3 every 15 s. Biggest loads immediately.
+                  // Premium users: every holding gets full analysis + Excel.
+                  // Free users: only the biggest holding gets full analysis.
+                  const isFree  = isPremium || h.ticker.toUpperCase() === freeExcelTicker;
                   const sMs     = isFree ? 0 : 3_000 + Math.floor(simpleIdx / 3) * 15_000;
                   if (!isFree) simpleIdx++;
                   return (
@@ -1976,6 +1983,7 @@ export default function Home() {
                       pctGain={h.pctGain}
                       isLargestHolding={isFree}
                       isSimple={!isFree}
+                      isPremium={isPremium}
                       staggerMs={sMs}
                       t={t}
                       appLang={appLang}
@@ -2587,6 +2595,57 @@ export default function Home() {
                         style={{ backgroundColor: "#0EA5E9", color: "white" }}>
                         {t("Start →", "Inizia →")}
                       </span>
+                    </button>
+                  )}
+
+                  {/* ── Premium subscription card ── */}
+                  {isPremium ? (
+                    <div className="rounded-xl px-4 py-3 flex items-center justify-between"
+                      style={{ backgroundColor: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.30)" }}>
+                      <div>
+                        <p className="text-sm font-semibold text-white">
+                          ✦ {t("Premium Active", "Premium Attivo")}
+                        </p>
+                        <p className="text-xs mt-0.5" style={{ color: "#94A3B8" }}>
+                          {t("Full analysis on all holdings", "Analisi completa su tutti i titoli")}
+                        </p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          const res  = await fetch("/api/stripe/portal", { method: "POST" });
+                          const json = await res.json();
+                          if (json.url) window.location.href = json.url;
+                        }}
+                        className="text-xs px-3 py-1.5 rounded-full font-medium transition-opacity hover:opacity-80"
+                        style={{ backgroundColor: "rgba(99,102,241,0.20)", color: "#A5B4FC" }}>
+                        {t("Manage", "Gestisci")}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={async () => {
+                        const priceId = process.env.NEXT_PUBLIC_STRIPE_PRICE_MONTHLY;
+                        if (!priceId) {
+                          alert(t("Stripe not configured yet.", "Stripe non ancora configurato."));
+                          return;
+                        }
+                        const res  = await fetch("/api/stripe/checkout", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ priceId }),
+                        });
+                        const json = await res.json();
+                        if (json.url) window.location.href = json.url;
+                      }}
+                      className="w-full rounded-xl px-4 py-3 text-left transition-opacity hover:opacity-90"
+                      style={{ background: "linear-gradient(135deg, #6366F1, #0EA5E9)", border: "none" }}>
+                      <p className="text-sm font-bold text-white">
+                        ✦ {t("Upgrade to Premium", "Passa a Premium")}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.75)" }}>
+                        {t("Full analysis on all holdings + Excel — €9.99/mo · 7-day free trial",
+                           "Analisi completa + Excel per tutti i titoli — €9,99/mese · 7 giorni gratis")}
+                      </p>
                     </button>
                   )}
 

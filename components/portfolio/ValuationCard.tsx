@@ -21,6 +21,7 @@ interface Props {
   pctGain:          number;
   isLargestHolding: boolean; // true = free full card this month
   isSimple?:        boolean; // true = non-free card → show only P/E + premium lock
+  isPremium?:       boolean; // true = user has active subscription → unlock all cards
   staggerMs?:       number;  // milliseconds to wait before firing the first fetch
   t: (en: string, it: string) => string;
   appLang: "en" | "it";
@@ -28,7 +29,7 @@ interface Props {
 
 export default function ValuationCard({
   ticker, name, price, currSym, pctGain,
-  isLargestHolding, isSimple = false, staggerMs = 0,
+  isLargestHolding, isSimple = false, isPremium = false, staggerMs = 0,
   t, appLang,
 }: Props) {
   const [data,    setData]    = useState<ValuationResult | null>(null);
@@ -532,9 +533,9 @@ export default function ValuationCard({
             {t("Your P&L", "Il tuo P&L")}: <span style={{ color: pctGain >= 0 ? "#16A34A" : "#DC2626" }}>{pctGain >= 0 ? "+" : ""}{pctGain.toFixed(1)}%</span>
           </p>
         </div>
-        {/* Excel button — full card only */}
+        {/* Excel button — unlocked for free biggest holding or premium users */}
         {!isSimple && (
-          isLargestHolding ? (
+          (isLargestHolding || isPremium) ? (
             <button
               onClick={downloadExcel}
               disabled={!data || loading}
@@ -886,12 +887,16 @@ export default function ValuationCard({
           </div>
 
           {/* Premium lock CTA */}
-          <div className="rounded-xl p-3" style={{ backgroundColor: "#1E3A5F" }}>
+          <div className="rounded-xl p-3" style={{ background: "linear-gradient(135deg, #1E3A5F, #1e1b4b)" }}>
             <p className="text-xs font-semibold text-white mb-0.5">
               🔒 {t("Full Analysis — Premium", "Analisi Completa — Premium")}
             </p>
-            <p className="text-xs" style={{ color: "#BAE6FD" }}>
+            <p className="text-xs mb-2" style={{ color: "#BAE6FD" }}>
               {t("DCF · Graham Number · EV/EBITDA · Excel Export", "DCF · Graham Number · EV/EBITDA · Export Excel")}
+            </p>
+            <p className="text-xs" style={{ color: "#A5B4FC" }}>
+              {t("Open your profile to upgrade — €9.99/mo · 7-day free trial",
+                 "Apri il profilo per aggiornare — €9,99/mese · 7 giorni gratis")}
             </p>
           </div>
 

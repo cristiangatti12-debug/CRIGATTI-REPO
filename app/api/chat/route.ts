@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { isPremium } from "@/lib/premium";
 
 // ── Fetch price directly from Yahoo Finance (avoids internal route call) ──────
 async function fetchPrice(ticker: string) {
@@ -148,10 +149,15 @@ export async function POST(req: NextRequest) {
     `❌ Do NOT trigger: "should I buy Apple?", "I like Tesla", "what do you think of NVDA?", "is Apple a good buy?"\n` +
     `When triggered, respond with ONLY this single token: ADD_HOLDING_FLOW`;
 
+  // ── Premium: more tokens + longer history ────────────────────────────────
+  const userPremium  = user?.id ? await isPremium(user.id) : false;
+  const maxTokens    = userPremium ? 1500 : 700;
+  const historySlice = userPremium ? history.slice(-20) : history.slice(-10);
+
   // ── Call Groq ──────────────────────────────────────────────────────────────
   const groqMessages = [
     { role: "system", content: systemPrompt },
-    ...history.slice(-10),
+    ...historySlice,
     { role: "user",   content: message },
   ];
 
@@ -163,9 +169,9 @@ export async function POST(req: NextRequest) {
         "Content-Type":  "application/json",
       },
       body: JSON.stringify({
-        model:       "llama-3.3-70b-versatile",  // Smarter model, still fast on Groq
+        model:       "llama-3.3-70b-versatile",
         messages:    groqMessages,
-        max_tokens:  700,
+        max_tokens:  maxTokens,
         temperature: 0.65,
       }),
     });
