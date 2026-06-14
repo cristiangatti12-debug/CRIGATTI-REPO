@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 30;
+
 async function fetchQuote(symbol: string) {
   // Try query2 first (more reliable from Vercel IPs), fall back to query1
   for (const host of ["query2", "query1"]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     try {
       const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2d`;
       const res = await fetch(url, {
@@ -10,8 +14,10 @@ async function fetchQuote(symbol: string) {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "Accept": "application/json",
         },
+        signal: controller.signal,
         next: { revalidate: 60 },
-      });
+      } as RequestInit);
+      clearTimeout(timer);
       if (!res.ok) continue;
       const json = await res.json();
       const result = json?.chart?.result?.[0];
@@ -34,9 +40,7 @@ async function fetchQuote(symbol: string) {
         changePct: prev !== 0 ? ((price - prev) / prev) * 100 : 0,
         currency:  meta.currency ?? "USD",
       };
-    } catch {
-      continue;
-    }
+    } catch { clearTimeout(timer); continue; }
   }
   return { symbol, price: 0, change: 0, changePct: 0, currency: "USD", error: true };
 }

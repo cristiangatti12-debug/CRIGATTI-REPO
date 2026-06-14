@@ -90,12 +90,30 @@ export interface NewsItem {
 
 // ── AI Signal per holding ────────────────────────────────────────────────────
 
+export type PacInterval = "weekly" | "monthly" | "quarterly";
+
+export interface AccumulationPlan {
+  id?:             string;
+  user_id?:        string;
+  ticker:          string;
+  name:            string;
+  amount:          number;
+  currency:        string;
+  interval:        PacInterval;
+  start_date:      string;    // YYYY-MM-DD
+  last_purchase?:  string | null;
+  purchase_count:  number;
+  total_invested:  number;
+  status:          "active" | "paused";
+  created_at?:     string;
+}
+
 export interface TickerSignal {
   ticker:    string;
   score:     number | null;
   signal:    Signal;
-  factors:   { trend: number; value: number; momentum: number } | null;
-  meta:      { ma200Diff: number; mom3m: number; pe: number | null; fairPE: number; sector: string; peEstimated?: boolean; unprofitable?: boolean } | null;
+  factors:   { trend: number; value: number; momentum: number; mom1m: number } | null;
+  meta:      { ma200Diff: number; mom3m: number; pe: number | null; fairPE: number; sector: string; peEstimated?: boolean; unprofitable?: boolean; ter?: number | null; aum?: number | null } | null;
   analyst: {
     label: string;               // "STRONG BUY" | "BUY" | "HOLD" | "SELL"
     strongBuy: number; buy: number; hold: number; sell: number; strongSell: number;
@@ -130,9 +148,10 @@ export interface MarketStockSignal {
     unprofitable: boolean;         // true when company has negative trailing earnings
   };
   factors: {
-    trend:     number;   // 0–40 (200MA trend)
-    value:     number;   // 0–35 (P/E valuation)
-    momentum:  number;   // 0–25 (3-month momentum)
+    trend:     number;   // 0–20 (52-week range position)
+    value:     number;   // 0–30 (P/E valuation)
+    momentum:  number;   // 0–30 (3-month momentum)
+    mom1m:     number;   // 0–20 (1-month momentum)
   };
   reasoning: string | null;
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 30;
+
 interface YahooNewsItem {
   uuid:                string;
   title:               string;
@@ -40,17 +42,21 @@ function newsQuery(ticker: string): string {
 async function fetchYahooNews(ticker: string): Promise<YahooNewsItem[]> {
   const query = newsQuery(ticker);
   for (const host of ["query2", "query1"]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
     try {
       const url = `https://${host}.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=8&enableNavLinks=false`;
       const res = await fetch(url, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        signal: controller.signal,
         next: { revalidate: 300 },
-      });
+      } as RequestInit);
+      clearTimeout(timer);
       if (!res.ok) continue;
       const data = await res.json();
       const items = (data.news ?? []) as YahooNewsItem[];
       if (items.length > 0) return items;
-    } catch { continue; }
+    } catch { clearTimeout(timer); continue; }
   }
   return [];
 }

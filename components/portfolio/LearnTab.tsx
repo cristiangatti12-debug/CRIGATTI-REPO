@@ -58,10 +58,10 @@ function StatTable({ rows }: { rows: { label:string; value:string; extra?:string
       {rows.map((r,i) => (
         <div key={i} className="flex items-center justify-between px-3 py-2"
           style={{ backgroundColor: i%2===0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)" }}>
-          <span className="text-xs" style={{ color:"#94A3B8" }}>{r.label}</span>
+          <span className="text-xs" style={{ color:"#CBD5E1" }}>{r.label}</span>
           <div className="text-right">
             <span className="text-xs font-semibold text-white">{r.value}</span>
-            {r.extra && <span className="text-xs ml-2" style={{ color:"#64748B" }}>{r.extra}</span>}
+            {r.extra && <span className="text-xs ml-2" style={{ color:"#94A3B8" }}>{r.extra}</span>}
           </div>
         </div>
       ))}
@@ -85,10 +85,100 @@ function CategoryHeader({ icon, title, subtitle, color }: { icon:string; title:s
   );
 }
 
+// ── Scroll-stopping hook for each lesson (shown in collapsed card) ────────────
+const HOOKS: Record<number, { en: string; it: string }> = {
+  // Cat 1 — Before You Start
+  1:  { en: "No emergency fund = forced to sell at the worst possible time.", it: "Senza fondo emergenza = costretto a vendere nel momento peggiore." },
+  2:  { en: "€1,000 in cash loses ~€30 of real value every year. Silently.", it: "€1.000 in contanti perdono ~€30 di valore reale ogni anno. Silenziosamente." },
+  3:  { en: "The longer until you need money, the more risk you can afford.", it: "Più lontano è il momento in cui ti servirà il denaro, più rischio puoi permetterti." },
+  4:  { en: "€50/month invested at 25 beats €500/month started at 40.", it: "€50/mese investiti a 25 anni battono €500/mese iniziati a 40." },
+  // Cat 2 — Investment Types
+  5:  { en: "Buy one Apple share = own a tiny piece of Apple. Literally.", it: "Compra un'azione Apple = possiedi un pezzo di Apple. Letteralmente." },
+  6:  { en: "One ETF. 1,400 companies. One click.", it: "Un ETF. 1.400 aziende. Un click." },
+  7:  { en: "90% of professional fund managers lose to a simple index fund.", it: "Il 90% dei gestori professionisti perde contro un semplice fondo indice." },
+  8:  { en: "Bonds pay you interest while you sleep. Here's how.", it: "Le obbligazioni ti pagano interessi mentre dormi. Ecco come." },
+  9:  { en: "REITs: own real estate without buying a single brick.", it: "REIT: possiedi immobili senza comprare un singolo mattone." },
+  10: { en: "Gold can't pay rent. Here's when it's still worth owning.", it: "L'oro non paga affitti. Ecco quando vale comunque la pena possederlo." },
+  11: { en: "Crypto: highest return potential — and highest loss potential.", it: "Crypto: massimo potenziale di guadagno — e di perdita." },
+  12: { en: "Cash earns interest now — but still loses to inflation long-term.", it: "La liquidità rende interessi ora — ma perde contro l'inflazione nel lungo periodo." },
+  33: { en: "Preferred stocks: the hybrid between a stock and a bond.", it: "Azioni privilegiate: l'ibrido tra un'azione e un'obbligazione." },
+  34: { en: "Same idea, very different costs. ETFs vs mutual funds — who wins?", it: "Stessa idea, costi molto diversi. ETF vs fondi comuni — chi vince?" },
+  35: { en: "Options let you profit from price moves WITHOUT buying the stock.", it: "Le opzioni ti permettono di guadagnare dai movimenti senza comprare il titolo." },
+  // Cat 3 — Key Analysis Concepts
+  13: { en: "Your P&L is just a number on a screen — until you sell, nothing is real.", it: "Il tuo P&L è solo un numero sullo schermo — finché non vendi, niente è reale." },
+  14: { en: "Einstein called compound interest the 8th wonder of the world.", it: "Einstein definì l'interesse composto l'8° meraviglia del mondo." },
+  15: { en: "€200/month for 30 years at 10%/yr = €452,000. Set up once, forget.", it: "€200/mese per 30 anni al 10%/anno = €452.000. Imposta una volta, dimentica." },
+  16: { en: "A stock at P/E 50 can be CHEAPER than one at P/E 10. Here's why.", it: "Un titolo a P/E 50 può essere PIÙ ECONOMICO di uno a P/E 10. Ecco perché." },
+  17: { en: "The 200-day moving average: one line that reveals the whole trend.", it: "La media mobile a 200 giorni: una linea che rivela l'intero trend." },
+  18: { en: "Volume reveals who really believes in a price move.", it: "Il volume rivela chi crede davvero in un movimento di prezzo." },
+  19: { en: "Vela's score: three factors, 0–100, your portfolio in plain language.", it: "Il punteggio Vela: tre fattori, 0–100, il tuo portafoglio in linguaggio semplice." },
+  20: { en: "When analysts all agree, the market has already priced it in.", it: "Quando tutti gli analisti concordano, il mercato l'ha già scontato." },
+  21: { en: "Don't put all eggs in one basket — but how many baskets is enough?", it: "Non mettere tutte le uova in un solo paniere — ma quanti panieri bastano?" },
+  22: { en: "Higher risk = higher return? Not always. Here's the real trade-off.", it: "Più rischio = più rendimento? Non sempre. Ecco il vero compromesso." },
+  23: { en: "Rebalancing is the only systematic 'sell high, buy low' strategy.", it: "Il ribilanciamento è l'unica strategia sistematica 'vendi alto, compra basso'." },
+  // Cat 4 — Historical Performance
+  24: { en: "Stocks: ~10%/yr since 1926. Bonds: ~4–5%. Cash: barely beats inflation.", it: "Azioni: ~10%/anno dal 1926. Obbligazioni: ~4–5%. Liquidità: appena batte l'inflazione." },
+  25: { en: "The S&P 500 crashed -57% in 2008. Then recovered to all-time highs.", it: "L'S&P 500 crollò del -57% nel 2008. Poi recuperò ai massimi storici." },
+  26: { en: "Missing just 10 best market days cuts your 20-year return in HALF.", it: "Perdere solo i 10 giorni migliori dimezza il tuo rendimento in 20 anni." },
+  27: { en: "Inflation is a ~3%/yr tax on your savings — invisible but certain.", it: "L'inflazione è una tassa del ~3%/anno sui tuoi risparmi — invisibile ma certa." },
+  28: { en: "Bull markets last ~4.5 years on average. Bears last only ~10 months.", it: "I mercati toro durano ~4,5 anni in media. Gli orsi solo ~10 mesi." },
+  // Cat 5 — Protecting Your Money
+  29: { en: "Guaranteed high returns with zero risk = 100% a scam. Every time.", it: "Alti rendimenti garantiti a rischio zero = 100% una truffa. Sempre." },
+  30: { en: "A 1.5% annual fee costs you €266,000 more than 0.1% over 30 years.", it: "Una commissione dell'1,5% annuo ti costa €266.000 in più dello 0,1% in 30 anni." },
+  31: { en: "Tax-advantaged accounts are the closest thing to free money from the government.", it: "I conti agevolati fiscalmente sono il più vicino al denaro gratis dal governo." },
+  32: { en: "Panic-selling in March 2020 cost investors half their eventual recovery gains.", it: "Vendere per panico a marzo 2020 è costato agli investitori metà dei guadagni del recupero." },
+  // Cat 6 — Building Your Financial Plan
+  36: { en: "The most important investing decision: where you open your account.", it: "La decisione di investimento più importante: dove apri il tuo conto." },
+  37: { en: "Your age, not your mood, should determine your asset allocation.", it: "La tua età, non il tuo umore, dovrebbe determinare la tua asset allocation." },
+  38: { en: "50% needs, 30% wants, 20% savings. The only budget rule you need.", it: "50% bisogni, 30% desideri, 20% risparmio. L'unica regola di budget che ti serve." },
+  39: { en: "40% of the S&P 500's total return has come from reinvested dividends.", it: "Il 40% del rendimento totale dell'S&P 500 è venuto dai dividendi reinvestiti." },
+  40: { en: "Italy is < 1% of global stocks. Investing only locally is a hidden risk.", it: "L'Italia è < 1% delle azioni globali. Investire solo in Italia è un rischio nascosto." },
+  // Cat 7 — Investor Psychology
+  41: { en: "Your brain feels losses ~2× more painfully than equivalent gains.", it: "Il tuo cervello sente le perdite ~2× più dolorosamente dei guadagni equivalenti." },
+  42: { en: "Anchoring: holding a stock at €40 because you bought it at €120.", it: "Ancoraggio: tieni un titolo a €40 perché l'hai comprato a €120." },
+  43: { en: "Beginner's luck in a bull market makes everyone feel like a genius.", it: "La fortuna del principiante in un mercato toro fa sentire tutti dei geni." },
+  44: { en: "When everyone is excited about an asset — the gains are usually already gone.", it: "Quando tutti sono entusiasti di un asset — i guadagni sono di solito già andati." },
+  // Cat 8 — How Markets Work
+  45: { en: "Every trade you place gets matched with a real buyer or seller. Here's how.", it: "Ogni ordine che piazzi viene abbinato con un acquirente o venditore reale. Ecco come." },
+  46: { en: "One central bank decision can make or break your entire portfolio.", it: "Una decisione di una banca centrale può fare o disfare l'intero tuo portafoglio." },
+  47: { en: "Market order vs limit order: one small difference, potentially huge consequence.", it: "Ordine di mercato vs ordine limite: piccola differenza, potenzialmente grande conseguenza." },
+  48: { en: "ESG: can you invest with your values without sacrificing returns?", it: "ESG: puoi investire secondo i tuoi valori senza sacrificare i rendimenti?" },
+  // Cat 9 — ETF Master Class
+  49: { en: "One ETF share = tiny ownership of 1,400+ companies worldwide.", it: "Una quota ETF = piccola proprietà di oltre 1.400 aziende nel mondo." },
+  50: { en: "Accumulating or Distributing: one choice that determines how you get paid.", it: "Accumulazione o Distribuzione: una scelta che determina come vieni pagato." },
+  51: { en: "Physical vs synthetic: one actually holds the stocks. The other doesn't.", it: "Fisico vs sintetico: uno detiene davvero i titoli. L'altro no." },
+  52: { en: "TER: the one number that tells you how much your ETF costs per year.", it: "TER: il numero che ti dice quanto costa il tuo ETF all'anno." },
+  53: { en: "Bigger ETF = less closure risk. AUM size matters more than you think.", it: "ETF più grande = meno rischio di chiusura. L'AUM conta più di quanto pensi." },
+  54: { en: "Tracking difference > TER: the hidden real cost that matters more.", it: "La tracking difference > TER: il costo reale nascosto che conta di più." },
+  55: { en: "MSCI World, S&P 500, FTSE All-World: three indexes, huge differences.", it: "MSCI World, S&P 500, FTSE All-World: tre indici, differenze enormi." },
+  56: { en: "How to pick the right ETF in 15 minutes — a step-by-step checklist.", it: "Come scegliere l'ETF giusto in 15 minuti — una checklist passo passo." },
+  57: { en: "VWCE, IWDA, CSPX: the most trusted ETFs for European beginners.", it: "VWCE, IWDA, CSPX: gli ETF più affidabili per i principianti europei." },
+  58: { en: "5 ETF mistakes that cost beginners thousands — how to avoid them.", it: "5 errori sugli ETF che costano migliaia ai principianti — come evitarli." },
+  // Cat 10 — Stock Picking & Valuation
+  60: { en: "Most fund managers lose to the index. Why would YOU win?", it: "La maggior parte dei gestori perde contro l'indice. Perché dovresti vincere TU?" },
+  61: { en: "A stock at P/E 50 can be CHEAPER than one at P/E 10.", it: "Un titolo a P/E 50 può essere PIÙ ECONOMICO di uno a P/E 10." },
+  62: { en: "Buffett ignored the price. He focused on what the company actually owns.", it: "Buffett ignorava il prezzo. Si concentrava su ciò che l'azienda possiedeva davvero." },
+  63: { en: "Every stock has a mathematical fair price. Here's how analysts find it.", it: "Ogni azione ha un prezzo equo matematico. Ecco come gli analisti lo trovano." },
+  64: { en: "A 70-year-old formula that still helps identify undervalued stocks.", it: "Una formula di 70 anni che aiuta ancora a identificare titoli sottovalutati." },
+  65: { en: "The metric private equity firms use that most retail investors ignore.", it: "La metrica che i fondi di private equity usano e che la maggior parte degli investitori retail ignora." },
+  66: { en: "P/E only tells half the story. Growth changes everything.", it: "Il P/E racconta solo metà della storia. La crescita cambia tutto." },
+  67: { en: "Sometimes the best return is just the cash they pay you each quarter.", it: "A volte il miglior rendimento è semplicemente la cassa che ti pagano ogni trimestre." },
+  68: { en: "Is P/E 18 cheap or expensive? Only a comparison tells you.", it: "Un P/E di 18 è economico o costoso? Solo un confronto può dirtelo." },
+  69: { en: "No single model is always right. Using all of them gives you safety.", it: "Nessun modello è sempre giusto. Usarli tutti ti dà sicurezza." },
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function LearnTab({ enriched, signals, t, appLang }: Props) {
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [expandedLessonId, setExpandedLessonId] = useState<number | null>(null);
+  const expandedRef = useRef<number | null>(null); // ref mirror — readable inside callbacks without stale closure
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Always update the ref alongside the state so handleScroll can read it synchronously
+  const setExpanded = useCallback((id: number | null) => {
+    expandedRef.current = id;
+    setExpandedLessonId(id);
+  }, []);
 
   // Primary holding (largest by value)
   const sorted   = [...enriched].sort((a,b)=>b.currentVal-a.currentVal);
@@ -120,7 +210,9 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el || el.clientHeight === 0) return;
-    setCurrentIdx(Math.round(el.scrollTop / el.clientHeight));
+    if (expandedRef.current !== null) return; // card is open — ignore all outer scroll events
+    const newIdx = Math.round(el.scrollTop / el.clientHeight);
+    setCurrentIdx(newIdx);
   }, []);
 
   // ── CATEGORY 1: Before You Start ─────────────────────────────────────────────
@@ -1338,7 +1430,244 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
     ],
   };
 
-  const CATEGORIES = [cat1, cat2, cat3, cat4, cat5, cat6, cat7, cat8, cat9];
+  // ── CATEGORY 10: Stock Picking & Valuation ──────────────────────────────────
+  const cat10 = {
+    id:"valuation", icon:"🔍", color:"#10B981",
+    title: t("Stock Picking & Valuation","Stock Picking e Valutazione"),
+    subtitle: t("How to estimate what a company is actually worth — the methods pros use","Come stimare il valore reale di un'azienda — i metodi dei professionisti"),
+    lessons: [
+      {
+        id:60, icon:"🎯", level:"intermediate" as const,
+        title: t("Stock Picking vs. Index Investing","Stock Picking vs. Investimento Indicizzato"),
+        explanation: t(
+          "Stock picking means choosing individual companies to invest in — instead of buying the whole market via an index ETF. It can be rewarding if you're right, but studies show that over 80% of professional fund managers fail to beat a simple S&P 500 index fund over 10 years. They have Bloomberg terminals, PhDs, and full-time research teams — and still lose. Does that mean stock picking is pointless? No — but it should be done with clear analysis, not gut feelings or tips from social media.",
+          "Il stock picking significa scegliere singole aziende in cui investire — invece di comprare l'intero mercato tramite un ETF indice. Può essere gratificante se hai ragione, ma gli studi mostrano che oltre l'80% dei gestori professionisti non batte un semplice fondo indice S&P 500 in 10 anni. Hanno terminali Bloomberg, dottorati e team di ricerca a tempo pieno — e perdono comunque. Significa che il stock picking è inutile? No — ma va fatto con analisi chiara, non istinto o consigli dai social."
+        ),
+        stats: [
+          { label:t("Active managers beating S&P 500 over 10yr","Gestori attivi che battono S&P 500 in 10 anni"), value:"~20%", extra:t("SPIVA 2024","SPIVA 2024") },
+          { label:t("Active managers beating S&P 500 over 20yr","Gestori attivi che battono S&P 500 in 20 anni"), value:"~5%" },
+          { label:t("Minimum stocks for basic diversification","Titoli minimi per diversificazione base"), value:t("10–20 stocks","10–20 titoli") },
+          { label:t("Best approach for most investors","Approccio migliore per la maggior parte degli investitori"), value:t("Core ETF + small satellite portfolio","Core ETF + piccolo satellite") },
+        ],
+        ctx: t(
+          "Stock picking makes most sense when you have deep knowledge of a specific industry, or you identify something the market hasn't priced in yet. If neither applies, a global ETF is almost certainly the better choice. The winning hybrid: 80–90% in a global ETF (core) + 10–20% in high-conviction individual stocks (satellite).",
+          "Il stock picking ha più senso quando hai profonda conoscenza di un settore specifico, o identifichi qualcosa che il mercato non ha ancora scontato. Se nessuno dei due si applica, un ETF globale è quasi certamente la scelta migliore. L'ibrido vincente: 80–90% in un ETF globale (core) + 10–20% in titoli ad alta convinzione (satellite)."
+        ),
+        insight: t(
+          "The best approach for most investors: use ETFs as the core (80–90%) and express your research in a small satellite of individual stocks. You capture market returns on the core and only bet concentrated where you genuinely have an edge.",
+          "L'approccio migliore per la maggior parte degli investitori: usa gli ETF come nucleo (80–90%) ed esprimi la tua ricerca in un piccolo satellite di titoli singoli. Catturi i rendimenti di mercato sul nucleo e scommetti in modo concentrato solo dove hai davvero un vantaggio."
+        ),
+      },
+      {
+        id:61, icon:"🏷️", level:"basic" as const,
+        title: t("P/E Ratio — Your Primary Valuation Lens","Rapporto P/E — La Tua Prima Lente di Valutazione"),
+        explanation: t(
+          "The P/E ratio (Price ÷ Earnings per share) tells you how much you pay for each €1 of annual profit. A P/E of 15 means you pay €15 for every €1 the company earns per year. Context is everything: a tech company growing at 30%/year deserves a much higher P/E than a utility growing at 2%/year. A P/E of 50 for a company doubling profits every 3 years can be a bargain. A P/E of 10 for a company losing market share might be a value trap. Always compare within the same sector.",
+          "Il rapporto P/E (Prezzo ÷ Utile per azione) dice quanto paghi per ogni €1 di profitto annuo. Un P/E di 15 significa che paghi €15 per ogni €1 che l'azienda guadagna all'anno. Il contesto è tutto: un'azienda tech che cresce al 30%/anno merita un P/E molto più alto di un'utility che cresce al 2%/anno. Un P/E di 50 per un'azienda che raddoppia i profitti ogni 3 anni può essere un affare. Un P/E di 10 per un'azienda che perde quote di mercato potrebbe essere una trappola. Confronta sempre nello stesso settore."
+        ),
+        stats: [
+          { label:t("S&P 500 historical average P/E","P/E storico medio S&P 500"), value:"~15–17×", extra:t("since 1871","dal 1871") },
+          { label:t("Tech sector typical P/E","P/E tipico settore tech"), value:"25–40×", extra:t("high growth expected","alta crescita attesa") },
+          { label:t("Utilities sector typical P/E","P/E tipico utilities"), value:"12–18×", extra:t("stable but slow","stabile ma lento") },
+          { label:t("P/E < 0 (negative)","P/E < 0 (negativo)"), value:t("Company losing money","Azienda in perdita"), extra:t("extra caution","cautela extra") },
+        ],
+        ctx: (() => {
+          if (noPort || !primSig?.meta) return t("Add holdings to see a real P/E example from your portfolio.","Aggiungi titoli per vedere un esempio P/E reale dal tuo portafoglio.");
+          const pe = primSig.meta.pe; const fp = primSig.meta.fairPE; const sec = primSig.meta.sector || t("this sector","questo settore");
+          if (!pe || !fp) return t("Check the Analysis tab to see P/E data for your largest holding.","Controlla la scheda Analisi per vedere i dati P/E del tuo titolo più grande.");
+          return <span><strong style={{color:"white"}}>{primary?.ticker}</strong> {t("trades at P/E","tratta a P/E")} <strong style={{color: pe < fp ? "#4ADE80" : "#F87171"}}>{fmt(pe,1)}×</strong> {t("vs sector fair P/E of","vs P/E equo del settore di")} <strong style={{color:"white"}}>{fmt(fp,1)}×</strong> — {pe < fp ? t("trading below sector average.","sotto la media del settore.") : t("above sector average.","sopra la media del settore.")}</span>;
+        })(),
+        insight: t(
+          "Never compare P/Es across different sectors — it's meaningless. A bank at P/E 8 and a pharma at P/E 25 could both be fairly valued. Always compare a stock's P/E to its own sector's historical range and to direct competitors.",
+          "Non confrontare mai i P/E tra settori diversi — è privo di significato. Una banca a P/E 8 e una farmaceutica a P/E 25 potrebbero entrambe essere correttamente valutate. Confronta sempre il P/E di un titolo con il range storico del suo settore e con i concorrenti diretti."
+        ),
+      },
+      {
+        id:62, icon:"📚", level:"intermediate" as const,
+        title: t("Price-to-Book (P/B) — What Does the Company Own?","Prezzo/Valore Contabile (P/B) — Cosa Possiede l'Azienda?"),
+        explanation: t(
+          "Price-to-Book (P/B) compares a company's market value to its net assets (total assets minus total liabilities). P/B = 1 means you pay exactly what the company's books say it's worth in assets. P/B < 1 means you could theoretically buy the company for less than its assets — potentially a bargain. P/B > 3 means you're paying a large premium, justified only by strong earnings power or valuable intangibles. Banks and insurance companies are most commonly valued using P/B because their assets are mostly financial instruments.",
+          "Il Prezzo/Valore Contabile (P/B) confronta il valore di mercato con i suoi asset netti (totale attività meno passività). P/B = 1 significa che paghi esattamente quello che i libri contabili dicono valga in asset. P/B < 1 significa che potresti teoricamente comprare l'azienda per meno dei suoi asset — potenzialmente un affare. P/B > 3 significa che paghi un grande premio, giustificato solo da forte potere di guadagno o intangibili preziosi. Banche e assicurazioni sono più comunemente valutate con il P/B perché i loro asset sono principalmente strumenti finanziari."
+        ),
+        stats: [
+          { label:"P/B < 1.0", value:t("Below book value","Sotto il valore contabile"), extra:t("Potential value or distress","Potenziale valore o difficoltà") },
+          { label:"P/B 1.0–2.0", value:t("Fair to moderate premium","Premio equo o moderato"), extra:t("Typical industrials","Tipico industriali") },
+          { label:"P/B > 3.0", value:t("Large premium — growth must justify","Grande premio — la crescita deve giustificarlo"), extra:t("Common in tech","Comune nel tech") },
+          { label:t("S&P 500 median P/B (2024)","P/B mediano S&P 500 (2024)"), value:"~3.5×" },
+          { label:t("Financial sector typical P/B","P/B tipico settore finanziario"), value:"0.8–1.5×" },
+        ],
+        ctx: t(
+          "P/B is most useful for companies with tangible assets — banks, manufacturers, property companies. For tech and software companies with huge intangible value (brand, patents, network effects), P/B is less meaningful. Apple trades at P/B > 50 — most of its value is intangible and not captured in the balance sheet.",
+          "Il P/B è più utile per aziende con asset tangibili — banche, produttori, immobiliari. Per le aziende tech e software con enorme valore intangibile (brand, brevetti, effetti rete), il P/B è meno significativo. Apple tratta a P/B > 50 — la maggior parte del suo valore è intangibile e non catturato nel bilancio."
+        ),
+        insight: t(
+          "Benjamin Graham used P/B extensively — looking for stocks below 1.5× book as a margin of safety. Today, with tech-heavy markets, pure P/B investing misses most great companies. Use it as one filter alongside P/E and earnings growth, not as the sole decision tool.",
+          "Benjamin Graham usava molto il P/B — cercando titoli sotto 1,5× il valore contabile come margine di sicurezza. Oggi, con mercati dominati dal tech, il P/B puro non coglie la maggior parte delle grandi aziende. Usalo come uno dei filtri insieme al P/E e alla crescita degli utili, non come unico strumento decisionale."
+        ),
+      },
+      {
+        id:63, icon:"🧮", level:"advanced" as const,
+        title: t("DCF — What Is a Company Worth?","DCF — Quanto Vale un'Azienda?"),
+        explanation: t(
+          "DCF (Discounted Cash Flow) is the gold standard of company valuation. The idea: a company is worth the sum of all its future cash flows, discounted back to today's value. A euro received 10 years from now is worth less than a euro today — because today's euro could be invested and grow. The discount rate (WACC) represents the risk of investing in this company. Higher risk = higher discount rate = lower present value. Vela's Analysis tab runs a simplified 5-year DCF model for your largest holding, with a downloadable Excel model.",
+          "Il DCF (Discounted Cash Flow) è lo standard di riferimento per la valutazione aziendale. L'idea: un'azienda vale la somma di tutti i futuri flussi di cassa, scontati al valore attuale. Un euro ricevuto tra 10 anni vale meno di un euro oggi — perché l'euro di oggi potrebbe essere investito e crescere. Il tasso di sconto (WACC) rappresenta il rischio di investire in questa azienda. Più rischio = tasso di sconto più alto = valore attuale inferiore. La scheda Analisi di Vela esegue un modello DCF a 5 anni per il tuo titolo più grande, con un modello Excel scaricabile."
+        ),
+        stats: [
+          { label:t("DCF formula","Formula DCF"), value:"Σ (CFₜ ÷ (1+r)ᵗ) + Terminal Value" },
+          { label:t("Most sensitive input","Input più sensibile"), value:t("Revenue growth rate","Tasso di crescita dei ricavi"), extra:t("±1% changes value ~5–15%","±1% cambia il valore ~5–15%") },
+          { label:t("Discount rate (WACC)","Tasso di sconto (WACC)"), value:t("Typically 8–12% for equities","Tipicamente 8–12% per azioni") },
+          { label:t("Terminal growth rate","Tasso di crescita terminale"), value:t("Usually 2–3% (≈ inflation)","Di solito 2–3% (≈ inflazione)") },
+        ],
+        ctx: t(
+          "Vela uses a simplified DCF: 3-year average revenue growth, sector-adjusted WACC (10% default), 2.5% terminal growth. The fair value shown in the Analysis tab is the result. Download the Excel export to adjust assumptions and see the full model. A 1% change in the discount rate can move the fair value by 15–25%.",
+          "Vela usa un DCF semplificato: crescita media dei ricavi a 3 anni, WACC adeguato al settore (10% default), crescita terminale al 2,5%. Il valore equo mostrato nella scheda Analisi è il risultato. Scarica il modello Excel per modificare le assunzioni e vedere il modello completo. Un cambiamento dell'1% nel tasso di sconto può spostare il valore equo del 15–25%."
+        ),
+        insight: t(
+          "DCF is powerful but highly sensitive to assumptions. Changing the growth rate by just 2% or the discount rate by 1% can shift the 'fair value' by 20–40%. This is why analysts always express DCF as a range with a bull, base, and bear scenario — never a single number.",
+          "Il DCF è potente ma molto sensibile alle assunzioni. Cambiare il tasso di crescita del 2% o il tasso di sconto dell'1% può spostare il 'valore equo' del 20–40%. Ecco perché gli analisti esprimono sempre il DCF come un intervallo con scenario ottimista, base e pessimista — mai un numero singolo."
+        ),
+      },
+      {
+        id:64, icon:"📐", level:"intermediate" as const,
+        title: t("The Graham Number — A Classic Safety Check","Il Graham Number — Un Classico Controllo di Sicurezza"),
+        explanation: t(
+          "The Graham Number is the maximum price Benjamin Graham believed an investor should pay for a stock. Formula: √(22.5 × EPS × BVPS) where EPS = Earnings Per Share and BVPS = Book Value Per Share. If the stock price is below the Graham Number, it may be undervalued. The 22.5 factor comes from Graham's rules: P/E should not exceed 15× AND P/B should not exceed 1.5× (15 × 1.5 = 22.5). Vela's Analysis tab shows the Graham Number for your largest holding.",
+          "Il Graham Number è il prezzo massimo che Benjamin Graham riteneva un investitore dovesse pagare per un'azione. Formula: √(22,5 × EPS × BVPS) dove EPS = Utile per azione e BVPS = Valore contabile per azione. Se il prezzo è inferiore al Graham Number, il titolo potrebbe essere sottovalutato. Il fattore 22,5 deriva dalle regole di Graham: il P/E non deve superare 15× E il P/B non deve superare 1,5× (15 × 1,5 = 22,5). La scheda Analisi di Vela mostra il Graham Number per il tuo titolo più grande."
+        ),
+        stats: [
+          { label:t("Graham Number formula","Formula Graham Number"), value:"√(22.5 × EPS × BVPS)" },
+          { label:t("P/E component","Componente P/E"), value:t("Max 15×","Max 15×"), extra:t("Graham's fair P/E for stable earnings","P/E equo secondo Graham") },
+          { label:t("P/B component","Componente P/B"), value:t("Max 1.5×","Max 1,5×"), extra:t("Margin of safety on assets","Margine di sicurezza sugli asset") },
+          { label:t("Best suited for","Adatto a"), value:t("Mature, profitable companies","Aziende mature e redditizie") },
+          { label:t("Weakness","Limite"), value:t("Ignores future growth","Ignora la crescita futura"), extra:t("Undervalues growth companies","Sottovaluta le aziende in crescita") },
+        ],
+        ctx: t(
+          "The Graham Number works best for stable, asset-heavy companies — industrials, utilities, consumer staples. It systematically undervalues high-growth companies (tech, biotech) because it ignores future earnings growth potential. Use it as a floor price, not a ceiling: a stock consistently above it needs strong growth justification.",
+          "Il Graham Number funziona meglio per aziende stabili e ricche di asset — industriali, utilities, beni di consumo. Sottovaluta sistematicamente le aziende ad alta crescita (tech, biotech) perché ignora il potenziale di crescita degli utili futuri. Usalo come prezzo minimo, non massimo: un titolo costantemente sopra di esso necessita di forte giustificazione di crescita."
+        ),
+        insight: t(
+          "Graham himself said by the 1970s that many of his strict formulas needed updating for a world with intangible-heavy companies. The Graham Number is best used as one safety filter among many — particularly useful for screening undervalued industrials, banks, and value stocks.",
+          "Lo stesso Graham disse negli anni '70 che molte delle sue formule rigide avevano bisogno di aggiornamenti per un mondo con aziende ricche di intangibili. Il Graham Number è meglio usato come uno dei molti filtri di sicurezza — particolarmente utile per selezionare industriali, banche e titoli value sottovalutati."
+        ),
+      },
+      {
+        id:65, icon:"🏢", level:"advanced" as const,
+        title: t("EV/EBITDA — The Professional's Metric","EV/EBITDA — La Metrica dei Professionisti"),
+        explanation: t(
+          "EV/EBITDA (Enterprise Value ÷ Earnings Before Interest, Tax, Depreciation & Amortisation) is the preferred valuation metric of M&A professionals and private equity firms. EV = market cap + debt − cash: the total cost of 'buying' the entire company. Dividing by EBITDA gives the multiple of operating profit you're paying. Unlike P/E, it's capital-structure neutral — it doesn't matter whether a company uses lots of debt or none. This makes it ideal for comparing companies with different financing approaches or across different tax environments.",
+          "L'EV/EBITDA (Enterprise Value ÷ Utile prima di interessi, tasse, ammortamenti) è la metrica di valutazione preferita dai professionisti M&A e dai fondi di private equity. EV = capitalizzazione di mercato + debito − cassa: il costo totale di 'acquistare' l'intera azienda. Dividendo per l'EBITDA si ottiene il multiplo del profitto operativo che stai pagando. A differenza del P/E, è neutrale rispetto alla struttura del capitale — non importa se un'azienda usa molto debito o nessuno. Questo lo rende ideale per confrontare aziende con diversi approcci di finanziamento o in ambienti fiscali diversi."
+        ),
+        stats: [
+          { label:t("Enterprise Value formula","Formula Enterprise Value"), value:t("Mkt Cap + Debt − Cash","Cap Mkt + Debito − Cassa") },
+          { label:t("EV/EBITDA < 8×","EV/EBITDA < 8×"), value:t("Potentially cheap","Potenzialmente economico"), extra:t("Varies by sector","Varia per settore") },
+          { label:t("EV/EBITDA 8–15×","EV/EBITDA 8–15×"), value:t("Fair value range (S&P 500 typical)","Range valore equo (tipico S&P 500)") },
+          { label:t("EV/EBITDA > 20×","EV/EBITDA > 20×"), value:t("Premium — growth must justify","Premio — la crescita deve giustificarlo") },
+          { label:t("Tech sector typical","Tipico settore tech"), value:"20–40×" },
+          { label:t("Energy / Industrials typical","Tipico energia / industriali"), value:"6–12×" },
+        ],
+        ctx: t(
+          "Vela uses EV/EBITDA as one of the four valuation models in the Analysis tab. It often reveals a different picture from P/E — a company with lots of debt can look cheap on P/E but expensive on EV/EBITDA because you're effectively inheriting its debt when you buy shares.",
+          "Vela usa l'EV/EBITDA come uno dei quattro modelli di valutazione nella scheda Analisi. Spesso rivela un quadro diverso dal P/E — un'azienda con molto debito può sembrare economica sul P/E ma cara sull'EV/EBITDA perché stai effettivamente ereditando il suo debito quando compri azioni."
+        ),
+        insight: t(
+          "EV/EBITDA is particularly powerful when comparing companies with very different capital structures. Example: two retailers, one debt-free (P/E 20) and one with €5B in debt (P/E 15). The indebted one looks cheaper on P/E — but may be far more expensive on EV/EBITDA because you inherit its debt burden.",
+          "L'EV/EBITDA è particolarmente potente quando si confrontano aziende con strutture di capitale molto diverse. Esempio: due retailer, uno senza debito (P/E 20) e uno con €5 mld di debito (P/E 15). Quello indebitato sembra più economico sul P/E — ma può essere molto più caro sull'EV/EBITDA perché ne erediti il peso del debito."
+        ),
+      },
+      {
+        id:66, icon:"📈", level:"intermediate" as const,
+        title: t("PEG Ratio — Growth-Adjusted Valuation","Rapporto PEG — Valutazione Aggiustata per la Crescita"),
+        explanation: t(
+          "The PEG ratio solves the biggest problem with P/E: it ignores growth. PEG = P/E ÷ Annual Earnings Growth Rate (%). A stock with P/E 30 growing at 30%/year has PEG = 1.0. A stock with P/E 20 growing at 5%/year has PEG = 4.0. By Peter Lynch's rule of thumb (he averaged 29%/yr returns): PEG < 1.0 = potentially undervalued; PEG > 2.0 = potentially overvalued. The PEG lets you compare fast-growing and slow-growing companies on a level playing field.",
+          "Il rapporto PEG risolve il problema più grande del P/E: ignora la crescita. PEG = P/E ÷ Tasso di crescita annuo degli utili (%). Un titolo con P/E 30 che cresce al 30%/anno ha PEG = 1,0. Uno con P/E 20 che cresce al 5%/anno ha PEG = 4,0. Secondo la regola empirica di Peter Lynch (che ha mediato rendimenti del 29%/anno): PEG < 1,0 = potenzialmente sottovalutato; PEG > 2,0 = potenzialmente sopravvalutato. Il PEG ti permette di confrontare aziende a crescita veloce e lenta su un piano paritetico."
+        ),
+        stats: [
+          { label:t("PEG formula","Formula PEG"), value:t("P/E ÷ EPS growth rate (%)","P/E ÷ tasso crescita EPS (%)"), extra:"Peter Lynch" },
+          { label:"PEG < 1.0", value:t("Potentially undervalued","Potenzialmente sottovalutato"), extra:t("Lynch buy signal","Segnale di acquisto Lynch") },
+          { label:"PEG 1.0–2.0", value:t("Fairly valued","Correttamente valutato") },
+          { label:"PEG > 2.0", value:t("Potentially overvalued","Potenzialmente sopravvalutato"), extra:t("Needs strong conviction","Richiede forte convinzione") },
+        ],
+        ctx: t(
+          "The PEG ratio requires reliable earnings growth estimates — which are inherently uncertain. Always use forward-looking analyst consensus growth (next 12 months), not trailing growth. The PEG doesn't work for companies with negative earnings, very low growth, or businesses where growth is hard to predict (commodities, banks).",
+          "Il rapporto PEG richiede stime affidabili di crescita degli utili — che sono intrinsecamente incerte. Usa sempre la crescita forward-looking del consenso degli analisti (prossimi 12 mesi), non la crescita storica. Il PEG non funziona per aziende con utili negativi, crescita molto bassa o settori dove la crescita è difficile da prevedere (materie prime, banche)."
+        ),
+        insight: t(
+          "Peter Lynch found many of his best investments by screening for companies with PEG < 1 — fast-growing businesses the market undervalued relative to their growth potential. The key insight: the market often anchors on the P/E number and ignores how quickly the earnings denominator will change.",
+          "Peter Lynch trovò molti dei suoi migliori investimenti cercando aziende con PEG < 1 — imprese in rapida crescita che il mercato sottovalutava rispetto al loro potenziale. L'intuizione chiave: il mercato spesso si ancora al numero del P/E e ignora quanto velocemente cambierà il denominatore degli utili."
+        ),
+      },
+      {
+        id:67, icon:"💰", level:"basic" as const,
+        title: t("Dividend Yield as a Valuation Signal","Il Dividend Yield come Segnale di Valutazione"),
+        explanation: t(
+          "Dividend yield (annual dividend per share ÷ share price) can signal valuation extremes. When a stable company's yield is historically HIGH relative to its own range, the stock may be cheap (price has fallen). When yield is historically LOW, the stock may be expensive (price has risen). This 'yield reversion' approach works best for stable dividend payers — utilities, consumer staples, telecoms. Warning: a very high yield caused by a collapsing share price is often a 'yield trap' — the dividend may be cut soon.",
+          "Il dividend yield (dividendo annuo per azione ÷ prezzo dell'azione) può segnalare estremi di valutazione. Quando il yield di un'azienda stabile è storicamente ALTO rispetto al suo range, il titolo potrebbe essere economico (prezzo sceso). Quando il yield è storicamente BASSO, il titolo potrebbe essere caro (prezzo salito). Questo approccio di 'regressione al rendimento' funziona meglio per i pagatori di dividendi stabili — utilities, beni di consumo, telecomunicazioni. Attenzione: un yield molto alto causato da un crollo del prezzo è spesso una 'trappola del rendimento' — il dividendo potrebbe essere tagliato presto."
+        ),
+        stats: [
+          { label:t("S&P 500 average dividend yield","Dividend yield medio S&P 500"), value:"~1.5–2.0%/yr" },
+          { label:t("Utilities sector average yield","Yield medio settore utilities"), value:"3–5%/yr" },
+          { label:t("High yield warning threshold","Soglia di avviso yield alto"), value:"> 6–8%", extra:t("Check payout ratio — may signal distress","Controlla payout ratio — può segnalare difficoltà") },
+          { label:t("Sustainable payout ratio","Payout ratio sostenibile"), value:"< 70%", extra:t("Dividends ÷ Net income","Dividendi ÷ Utile netto") },
+          { label:t("Dividend Aristocrats","Dividend Aristocrats"), value:t("25+ consecutive increases","25+ aumenti consecutivi") },
+        ],
+        ctx: t(
+          "Gordon Growth Model — a simple valuation for dividend payers: Value = Annual Dividend ÷ (Required Return − Dividend Growth Rate). Example: a company paying €2/share/year, growing dividends at 3%/year, and you need 8% return: Value = €2 ÷ (0.08 − 0.03) = €40. If the stock trades at €30, it may be undervalued.",
+          "Gordon Growth Model — una valutazione semplice per i pagatori di dividendi: Valore = Dividendo Annuo ÷ (Rendimento Richiesto − Tasso di Crescita del Dividendo). Esempio: un'azienda che paga €2/azione/anno, fa crescere i dividendi al 3%/anno, e tu vuoi un rendimento dell'8%: Valore = €2 ÷ (0,08 − 0,03) = €40. Se il titolo tratta a €30, potrebbe essere sottovalutato."
+        ),
+        insight: t(
+          "Reinvesting dividends dramatically accelerates compounding. Historically ~40% of the S&P 500's total return has come from reinvested dividends — not price appreciation alone. A stock with a 3% yield that grows dividends at 7%/year will pay you more than its original price within 15 years.",
+          "Reinvestire i dividendi accelera drasticamente il compounding. Storicamente ~40% del rendimento totale dell'S&P 500 è venuto dai dividendi reinvestiti — non solo dall'apprezzamento del prezzo. Un titolo con un yield del 3% che fa crescere i dividendi al 7%/anno ti pagherà più del prezzo originale entro 15 anni."
+        ),
+      },
+      {
+        id:68, icon:"⚖️", level:"intermediate" as const,
+        title: t("Relative Valuation — Is It Cheap vs Peers?","Valutazione Relativa — È Economico vs i Peer?"),
+        explanation: t(
+          "Relative valuation (or 'comps analysis') finds a company's fair value by comparing it to similar businesses. Steps: (1) Identify 5–10 truly comparable companies — same sector, similar size, similar business model. (2) Calculate their median P/E, EV/EBITDA, or P/S ratios. (3) Apply that median to your target company's financials to get an implied fair value. This is why Vela shows your holding's P/E vs the sector fair P/E — that's exactly the relative valuation approach.",
+          "La valutazione relativa (o 'analisi comps') trova il valore equo di un'azienda confrontandola con aziende simili. Passaggi: (1) Identifica 5–10 aziende davvero comparabili — stesso settore, dimensioni simili, modello di business simile. (2) Calcola i loro multipli mediani P/E, EV/EBITDA o P/S. (3) Applica quella mediana ai dati finanziari dell'azienda target per ottenere un valore equo implicito. Ecco perché Vela mostra il P/E del tuo titolo vs il P/E equo del settore — è esattamente l'approccio di valutazione relativa."
+        ),
+        stats: [
+          { label:t("Tech sector median P/E (2024)","P/E mediano tech (2024)"), value:"~28×" },
+          { label:t("Financial sector median P/E","P/E mediano finanziari"), value:"~12×" },
+          { label:t("Healthcare sector median P/E","P/E mediano sanità"), value:"~20×" },
+          { label:t("Consumer Staples median P/E","P/E mediano beni di consumo"), value:"~18×" },
+          { label:t("Energy sector median P/E","P/E mediano energia"), value:"~10×" },
+        ],
+        ctx: t(
+          "The Analysis tab shows your holding's P/E vs its sector fair P/E estimate — this is relative valuation in practice. If your stock's P/E is 30% below the sector median, it may be undervalued. If it's 30% above, it needs to justify that premium with faster growth or higher quality margins.",
+          "La scheda Analisi mostra il P/E del tuo titolo vs il P/E equo stimato del settore — questa è la valutazione relativa in pratica. Se il P/E del tuo titolo è il 30% sotto la mediana del settore, potrebbe essere sottovalutato. Se è il 30% sopra, deve giustificare quel premio con una crescita più rapida o margini di qualità superiori."
+        ),
+        insight: t(
+          "The biggest risk with comps: comparing the wrong companies. Facebook (Meta) and a small regional newspaper both 'sell advertising' — but they are not comparable at all. Always verify: same business model, similar growth rate, similar margin profile, and similar market position before using comps as a valuation anchor.",
+          "Il rischio più grande con le comps: confrontare le aziende sbagliate. Facebook (Meta) e un piccolo giornale regionale 'vendono entrambi pubblicità' — ma non sono affatto comparabili. Verifica sempre: stesso modello di business, tasso di crescita simile, profilo dei margini simile e posizione di mercato simile prima di usare le comps come ancora di valutazione."
+        ),
+      },
+      {
+        id:69, icon:"🔬", level:"advanced" as const,
+        title: t("Putting It All Together — Multi-Model Valuation","Mettere Tutto Insieme — Valutazione Multi-Modello"),
+        explanation: t(
+          "Professional equity analysts use multiple valuation methods simultaneously, then triangulate. Each model captures something different: DCF captures long-term earnings power; P/E captures market sentiment and growth expectations; Graham Number captures asset safety; EV/EBITDA captures operational value vs total enterprise cost. When all models agree on a fair value range — and the current price is significantly below — you have a margin of safety. When models wildly disagree, it means either assumptions need review or the company has unusual characteristics that require deeper research.",
+          "Gli analisti azionari professionisti usano più metodi di valutazione contemporaneamente, poi triangolano. Ogni modello cattura qualcosa di diverso: il DCF cattura il potere di guadagno a lungo termine; il P/E cattura il sentiment di mercato e le aspettative di crescita; il Graham Number cattura la sicurezza degli asset; l'EV/EBITDA cattura il valore operativo vs il costo totale dell'impresa. Quando tutti i modelli concordano su un intervallo di valore equo — e il prezzo corrente è significativamente al di sotto — si ha un margine di sicurezza. Quando i modelli non concordano, significa che le assunzioni necessitano di revisione o che l'azienda ha caratteristiche inusuali."
+        ),
+        stats: [
+          { label:t("Vela's weighting approach","Approccio ponderato di Vela"), value:t("DCF 40% · P/E 25% · Graham 20% · EV/EBITDA 15%","DCF 40% · P/E 25% · Graham 20% · EV/EBITDA 15%") },
+          { label:t("Ideal margin of safety","Margine di sicurezza ideale"), value:"> 20–30%", extra:t("below weighted fair value","sotto il valore equo ponderato") },
+          { label:t("Models wildly disagree → action","Modelli in forte disaccordo → azione"), value:t("Research more — do not invest yet","Ricerca di più — non investire ancora") },
+          { label:t("Cross-validation","Validazione incrociata"), value:t("Check analyst consensus too","Controlla anche il consenso degli analisti") },
+        ],
+        ctx: t(
+          "This is exactly what Vela's Analysis tab does for your largest holding: runs all four models (DCF, P/E, Graham Number, EV/EBITDA), weights them, and produces a single AI verdict with an upside/downside percentage vs current price. Use it as your research starting point, not the final answer — always verify the underlying assumptions.",
+          "Questo è esattamente ciò che fa la scheda Analisi di Vela per il tuo titolo più grande: esegue tutti e quattro i modelli (DCF, P/E, Graham Number, EV/EBITDA), li pondera e produce un unico verdetto AI con una percentuale di upside/downside rispetto al prezzo attuale. Usalo come punto di partenza della ricerca, non come risposta finale — verifica sempre le assunzioni sottostanti."
+        ),
+        insight: t(
+          "The goal of valuation is not to find the 'perfect' number — it's to build enough conviction to act. If all your models show 30%+ upside with stress-tested assumptions, you have a thesis. If they show 5% upside, the risk/reward doesn't justify concentrated betting — a broad ETF is likely a better use of that capital.",
+          "L'obiettivo della valutazione non è trovare il numero 'perfetto' — è costruire abbastanza convinzione per agire. Se tutti i tuoi modelli mostrano più del 30% di upside con assunzioni testate sotto stress, hai una tesi. Se mostrano il 5% di upside, il rischio/rendimento non giustifica una scommessa concentrata — un ETF ampio è probabilmente un uso migliore di quel capitale."
+        ),
+      },
+    ],
+  };
+
+  const CATEGORIES = [cat1, cat2, cat3, cat4, cat5, cat6, cat7, cat8, cat9, cat10];
   const totalLessons = CATEGORIES.reduce((s,c)=>s+c.lessons.length,0);
 
   // Flat list of all lessons with their category metadata attached
@@ -1404,76 +1733,144 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
           WebkitOverflowScrolling:"touch",
         }}
       >
-        {allLessons.map((lesson, idx) => (
-          <div
-            key={lesson.id}
-            style={{
-              height:"100dvh",
-              scrollSnapAlign:"start",
-              scrollSnapStop:"always",
-              flexShrink:0,
-              overflowY:"auto",
-              padding:"12px 16px 16px",
-              display:"flex",
-              flexDirection:"column",
-              gap:"10px",
-            }}
-            className="no-scrollbar"
-          >
-            {/* Top row: category + lesson counter */}
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-              <span style={{ color:lesson.catColor, fontSize:"11px", fontWeight:"600" }}>
-                {lesson.catIcon} {lesson.catTitle}
-              </span>
-              <span style={{ color:"#334155", fontSize:"11px" }}>
-                {idx + 1} / {totalLessons}
-              </span>
-            </div>
-
-            {/* Main card */}
-            <div className="no-scrollbar" style={{
-              flex:1,
-              borderRadius:"20px",
-              backgroundColor:"rgba(255,255,255,0.06)",
-              border:`1px solid ${lesson.catColor}30`,
-              padding:"18px",
-              overflowY:"auto",
-              display:"flex",
-              flexDirection:"column",
-              gap:"10px",
-            }}>
-              {/* Icon + badge + title */}
-              <div style={{ flexShrink:0 }}>
-                <div style={{ fontSize:"40px", lineHeight:1, marginBottom:"10px" }}>{lesson.icon}</div>
-                <DiffBadge level={lesson.level} t={t} />
-                <h2 style={{ color:"white", fontWeight:"700", fontSize:"17px", marginTop:"8px", lineHeight:"1.3" }}>
-                  {lesson.title}
-                </h2>
+        {allLessons.map((lesson, idx) => {
+          const hook = HOOKS[lesson.id];
+          const isExpanded = expandedLessonId === lesson.id;
+          return (
+            <div
+              key={lesson.id}
+              style={{
+                height:"100dvh",
+                scrollSnapAlign:"start",
+                scrollSnapStop:"always",
+                flexShrink:0,
+                overflowY:"auto",
+                padding:"12px 16px 16px",
+                display:"flex",
+                flexDirection:"column",
+                gap:"10px",
+              }}
+              className="no-scrollbar"
+            >
+              {/* Top row: category + lesson counter */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+                <span style={{ color:lesson.catColor, fontSize:"11px", fontWeight:"600" }}>
+                  {lesson.catIcon} {lesson.catTitle}
+                </span>
+                <span style={{ color:"#334155", fontSize:"11px" }}>
+                  {idx + 1} / {totalLessons}
+                </span>
               </div>
 
-              {/* Explanation */}
-              <p style={{ color:"#CBD5E1", fontSize:"13px", lineHeight:"1.65" }}>
-                {lesson.explanation}
-              </p>
+              {!isExpanded ? (
+                /* ── COLLAPSED: hook view ── */
+                <div
+                  onClick={() => setExpanded(lesson.id)}
+                  className="no-scrollbar"
+                  style={{
+                    flex:1,
+                    borderRadius:"20px",
+                    backgroundColor:"rgba(255,255,255,0.06)",
+                    border:`1px solid ${lesson.catColor}40`,
+                    padding:"28px 22px",
+                    display:"flex",
+                    flexDirection:"column",
+                    alignItems:"center",
+                    justifyContent:"center",
+                    gap:"18px",
+                    cursor:"pointer",
+                    userSelect:"none",
+                  }}
+                >
+                  <div style={{ fontSize:"56px", lineHeight:1, textAlign:"center" }}>{lesson.icon}</div>
+                  <p style={{ color:"white", fontWeight:"700", fontSize:"20px", lineHeight:"1.35", textAlign:"center", margin:0, maxWidth:"280px" }}>
+                    {hook ? t(hook.en, hook.it) : lesson.title}
+                  </p>
+                  <DiffBadge level={lesson.level} t={t} />
+                  <div style={{ width:"36px", height:"1px", backgroundColor:"rgba(255,255,255,0.12)" }} />
+                  <button
+                    style={{
+                      backgroundColor:`${lesson.catColor}18`,
+                      border:`1px solid ${lesson.catColor}50`,
+                      color:lesson.catColor,
+                      borderRadius:"9999px",
+                      padding:"9px 22px",
+                      fontSize:"13px",
+                      fontWeight:"600",
+                      cursor:"pointer",
+                      letterSpacing:"0.01em",
+                    }}
+                  >
+                    ↓ {t("Tap to learn more", "Scopri di più")}
+                  </button>
+                </div>
+              ) : (
+                /* ── EXPANDED: full content ── */
+                <div className="no-scrollbar"
+                  style={{
+                  flex:1,
+                  borderRadius:"20px",
+                  backgroundColor:"rgba(255,255,255,0.06)",
+                  border:`1px solid ${lesson.catColor}30`,
+                  padding:"18px",
+                  overflowY:"auto",
+                  overscrollBehaviorY:"contain",
+                  display:"flex",
+                  flexDirection:"column",
+                  gap:"10px",
+                }}>
+                  {/* Compact header row */}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                      <span style={{ fontSize:"26px", lineHeight:1 }}>{lesson.icon}</span>
+                      <DiffBadge level={lesson.level} t={t} />
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExpanded(null); }}
+                      style={{
+                        backgroundColor:"rgba(255,255,255,0.06)",
+                        border:"1px solid rgba(255,255,255,0.12)",
+                        color:"#94A3B8",
+                        borderRadius:"9999px",
+                        padding:"4px 14px",
+                        fontSize:"12px",
+                        cursor:"pointer",
+                      }}
+                    >
+                      ↑ {t("Less", "Meno")}
+                    </button>
+                  </div>
 
-              {/* Stats */}
-              {"stats" in lesson && lesson.stats && <StatTable rows={lesson.stats} />}
+                  {/* Title */}
+                  <h2 style={{ color:"white", fontWeight:"700", fontSize:"17px", lineHeight:"1.3", margin:0, flexShrink:0 }}>
+                    {lesson.title}
+                  </h2>
 
-              {/* Context box */}
-              {lesson.ctx && <CtxBox label={t("In Context","In Contesto")}>{lesson.ctx}</CtxBox>}
+                  {/* Explanation */}
+                  <p style={{ color:"#CBD5E1", fontSize:"13px", lineHeight:"1.65" }}>
+                    {lesson.explanation}
+                  </p>
 
-              {/* Insight */}
-              <InsightBox>{lesson.insight}</InsightBox>
+                  {/* Stats */}
+                  {"stats" in lesson && lesson.stats && <StatTable rows={lesson.stats} />}
+
+                  {/* Context box */}
+                  {lesson.ctx && <CtxBox label={t("In Context","In Contesto")}>{lesson.ctx}</CtxBox>}
+
+                  {/* Insight */}
+                  <InsightBox>{lesson.insight}</InsightBox>
+                </div>
+              )}
+
+              {/* Swipe hint — only on first lesson when collapsed */}
+              {idx === 0 && !isExpanded && (
+                <p style={{ textAlign:"center", color:"#334155", fontSize:"11px", flexShrink:0 }}>
+                  ↕ {t("Swipe up to browse lessons","Scorri verso l'alto per sfogliare le lezioni")}
+                </p>
+              )}
             </div>
-
-            {/* Swipe hint — only on first lesson */}
-            {idx === 0 && (
-              <p style={{ textAlign:"center", color:"#334155", fontSize:"11px", flexShrink:0 }}>
-                ↕ {t("Swipe up to browse lessons","Scorri verso l'alto per sfogliare le lezioni")}
-              </p>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

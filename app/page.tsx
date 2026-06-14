@@ -16,6 +16,7 @@ import RiskModal,           { loadRiskResult, type RiskResult } from "@/componen
 import DiversificationPanel from "@/components/portfolio/DiversificationPanel";
 import LearnTab            from "@/components/portfolio/LearnTab";
 import WatchlistTab        from "@/components/portfolio/WatchlistTab";
+import PacSection         from "@/components/portfolio/PacSection";
 import VelaLogo           from "@/components/ui/VelaLogo";
 import AnalysisWizard     from "@/components/community/AnalysisWizard";
 import UserProfileDrawer  from "@/components/community/UserProfileDrawer";
@@ -469,6 +470,9 @@ function HoldingSignalRow({
           </button>
         )}
       </div>
+      <p className="text-xs" style={{ color: "#334155" }}>
+        {t("AI signals are educational — not financial advice.", "I segnali AI sono educativi — non consulenza finanziaria.")}
+      </p>
 
       {/* Score detail drawer */}
       {f && m && (
@@ -494,16 +498,16 @@ function HoldingSignalRow({
             </p>
           </div>
           <FactorRow
-            label={t("Trend ↗", "Trend ↗")}
-            score={f.trend} max={40}
+            label={t("3M Momentum 🚀", "Momentum 3M 🚀")}
+            score={f.momentum} max={30}
             description={t(
-              `Price is ${m.ma200Diff >= 0 ? "+" : ""}${m.ma200Diff.toFixed(1)}% vs its 200-day moving average. Being above the long-term trend line means the stock is in an uptrend — a healthy sign.`,
-              `Il prezzo è ${m.ma200Diff >= 0 ? "+" : ""}${m.ma200Diff.toFixed(1)}% rispetto alla media a 200 giorni. Essere sopra il trend di lungo periodo è un segnale positivo.`
+              `${m.mom3m >= 0 ? "+" : ""}${m.mom3m.toFixed(1)}% return over the last 3 months. Positive momentum means the stock has been trending in the right direction recently.`,
+              `${m.mom3m >= 0 ? "+" : ""}${m.mom3m.toFixed(1)}% di rendimento negli ultimi 3 mesi. Momentum positivo indica una tendenza al rialzo.`
             )}
           />
           <FactorRow
             label={t("Fair Value ⚖️", "Valore Equo ⚖️")}
-            score={f.value} max={35}
+            score={f.value} max={30}
             description={(() => {
               const sectorLabel = m.sector || "this sector";
               if (m.unprofitable) {
@@ -529,11 +533,19 @@ function HoldingSignalRow({
             })()}
           />
           <FactorRow
-            label={t("Momentum 🚀", "Momentum 🚀")}
-            score={f.momentum} max={25}
+            label={t("52W Trend ↗", "Trend 52S ↗")}
+            score={f.trend} max={20}
             description={t(
-              `${m.mom3m >= 0 ? "+" : ""}${m.mom3m.toFixed(1)}% return over the last 3 months. Positive momentum means the stock has been moving in the right direction recently.`,
-              `${m.mom3m >= 0 ? "+" : ""}${m.mom3m.toFixed(1)}% di rendimento negli ultimi 3 mesi. Momentum positivo significa che il titolo si sta muovendo nella direzione giusta.`
+              `Price is ${m.ma200Diff >= 0 ? "+" : ""}${m.ma200Diff.toFixed(1)}% vs the midpoint of its 52-week range. Being in the upper half signals a sustained uptrend.`,
+              `Il prezzo è ${m.ma200Diff >= 0 ? "+" : ""}${m.ma200Diff.toFixed(1)}% rispetto al punto medio del range a 52 settimane.`
+            )}
+          />
+          <FactorRow
+            label={t("1M Momentum ⚡", "Momentum 1M ⚡")}
+            score={f.mom1m ?? 0} max={20}
+            description={t(
+              `Short-term confirmation. Positive 1-month return supports the current direction.`,
+              `Conferma a breve termine. Un rendimento positivo a 1 mese supporta la direzione attuale.`
             )}
           />
         </ScoreDrawer>
@@ -543,8 +555,48 @@ function HoldingSignalRow({
 }
 
 // ── AI SUGGESTIONS PANEL ─────────────────────────────────────────────────────
-function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: string, it: string) => string }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+function MarketSignalCard({ stock, t, userId, appLang }: {
+  stock:   MarketStockSignal;
+  t:       (en: string, it: string) => string;
+  userId:  string | null;
+  appLang: "en" | "it";
+}) {
+  const [drawerOpen,     setDrawerOpen]     = useState(false);
+  const [analysis,       setAnalysis]       = useState<string | null>(null);
+  const [analyzing,      setAnalyzing]      = useState(false);
+  const [analysisErr,    setAnalysisErr]    = useState("");
+  const [usedToday,      setUsedToday]      = useState(() => {
+    if (typeof window === "undefined") return false;
+    const saved = localStorage.getItem("vela_ai_asks_date");
+    const today = new Date().toISOString().split("T")[0];
+    if (saved !== today) return false;
+    return parseInt(localStorage.getItem("vela_ai_asks_count") ?? "0", 10) >= 1;
+  });
+
+  async function handleAskAI() {
+    if (usedToday || analyzing || !userId) return;
+    setAnalyzing(true);
+    setAnalysisErr("");
+    try {
+      const res  = await fetch(`/api/signal-analysis?ticker=${stock.ticker}&score=${stock.score}&signal=${stock.signal}&lang=${appLang}`);
+      const data = await res.json();
+      if (res.status === 429 || data.limited) {
+        setUsedToday(true);
+        setAnalysisErr(t("Daily limit reached. Resets at midnight UTC.", "Limite giornaliero raggiunto. Si resetta a mezzanotte UTC."));
+      } else if (data.analysis) {
+        setAnalysis(data.analysis);
+        const today = new Date().toISOString().split("T")[0];
+        localStorage.setItem("vela_ai_asks_date", today);
+        localStorage.setItem("vela_ai_asks_count", "1");
+        setUsedToday(true);
+      } else {
+        setAnalysisErr(t("Analysis unavailable. Try again.", "Analisi non disponibile. Riprova."));
+      }
+    } catch {
+      setAnalysisErr(t("Analysis unavailable. Try again.", "Analisi non disponibile. Riprova."));
+    }
+    setAnalyzing(false);
+  }
 
   const style    = SIGNAL_STYLE[stock.signal];
   const flag     = stock.region === "US" ? "🇺🇸" : "🇪🇺";
@@ -554,52 +606,126 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
   const badgeClr = style.color;
   const displayTicker = stock.ticker.replace(/\.(AS|DE|PA|L|SW|CO|MI)$/, "");
 
+  // Factor mini-chips data
+  const mom3mPct   = stock.meta?.mom3m ?? 0;
+  const ma200Diff  = stock.meta?.ma200Diff ?? 0;
+  const valueScore = stock.factors?.value ?? 0;
+  const mom3mColor = mom3mPct >= 0 ? "#4ADE80" : "#F87171";
+  const trendColor = ma200Diff >= 0 ? "#4ADE80" : "#F87171";
+
   return (
     <>
       <div className="rounded-2xl px-4 py-3"
         style={{
           backgroundColor: "rgba(255,255,255,0.06)",
-          border: stock.signal === "BUY" ? "1px solid rgba(34,197,94,0.25)" : stock.signal === "HOLD" ? "1px solid rgba(234,179,8,0.25)" : "1px solid rgba(248,113,113,0.25)",
+          border: stock.signal === "BUY"
+            ? "1px solid rgba(34,197,94,0.35)"
+            : stock.signal === "HOLD"
+            ? "1px solid rgba(234,179,8,0.25)"
+            : "1px solid rgba(248,113,113,0.25)",
+          boxShadow: stock.signal === "BUY" ? "0 0 0 1px rgba(34,197,94,0.08)" : "none",
         }}>
-        {/* Top row */}
+
+        {/* Top row: flag + ticker + name + badge */}
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: badgeBg, color: badgeClr }}>
+            <span style={{ fontSize:"14px", flexShrink:0 }}>{flag}</span>
+            <div className="min-w-0">
+              <span className="font-bold text-white" style={{ fontSize:"15px" }}>{displayTicker}</span>
+              <p className="text-xs leading-tight truncate" style={{ color:"#64748B", maxWidth:"140px" }}>{stock.name}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="font-bold" style={{ color: badgeClr, fontSize:"12px" }}>{stock.score}/100</span>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+              style={{
+                backgroundColor: badgeBg,
+                color: badgeClr,
+                boxShadow: stock.signal === "BUY" ? `0 0 8px ${badgeClr}55` : "none",
+              }}>
               {stock.signal}
             </span>
-            <span className="text-sm font-bold truncate text-white">
-              {flag} {displayTicker}
-            </span>
-            <span className="text-xs truncate hidden sm:inline" style={{ color: "#64748B" }}>
-              — {stock.name}
+          </div>
+        </div>
+
+        {/* Score bar — thicker */}
+        <div className="w-full rounded-full mb-3" style={{ backgroundColor:"rgba(255,255,255,0.08)", height:"5px" }}>
+          <div className="rounded-full score-bar" style={{ width:`${scoreBar}%`, backgroundColor:barColor, height:"5px" }} />
+        </div>
+
+        {/* Quote-style reasoning */}
+        {stock.reasoning && (
+          <p className="text-sm italic leading-relaxed mb-3" style={{ color:"#CBD5E1" }}>
+            &ldquo;{stock.reasoning}&rdquo;
+          </p>
+        )}
+
+        {/* Factor mini-chips row */}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <div style={{ backgroundColor:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.10)", borderRadius:"9999px", padding:"3px 9px" }}>
+            <span className="text-xs" style={{ color:"#94A3B8" }}>{t("3M","3M")} </span>
+            <span className="text-xs font-semibold" style={{ color:mom3mColor }}>
+              {mom3mPct >= 0 ? "+" : ""}{mom3mPct.toFixed(1)}%
             </span>
           </div>
-          <span className="text-xs font-semibold flex-shrink-0 ml-2" style={{ color: badgeClr }}>
-            {stock.score}/100
-          </span>
-        </div>
-        {/* Company name (mobile) */}
-        <p className="text-xs mb-2 sm:hidden" style={{ color: "#64748B" }}>{stock.name}</p>
-        {/* Score bar */}
-        <div className="w-full rounded-full h-1.5 mb-2" style={{ backgroundColor: "rgba(255,255,255,0.08)" }}>
-          <div className="h-1.5 rounded-full score-bar" style={{ width: `${scoreBar}%`, backgroundColor: barColor }} />
-        </div>
-        {/* Reasoning + How button */}
-        <div className="flex items-end justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            {stock.reasoning && (
-              <p className="text-xs italic leading-relaxed" style={{ color: "#64748B" }}>
-                &ldquo;{stock.reasoning}&rdquo;
-              </p>
-            )}
+          <div style={{ backgroundColor:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.10)", borderRadius:"9999px", padding:"3px 9px" }}>
+            <span className="text-xs" style={{ color:"#94A3B8" }}>{t("Trend","Trend")} </span>
+            <span className="text-xs font-semibold" style={{ color:trendColor }}>
+              {ma200Diff >= 0 ? "+" : ""}{ma200Diff.toFixed(1)}%
+            </span>
           </div>
+          <div style={{ backgroundColor:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.10)", borderRadius:"9999px", padding:"3px 9px" }}>
+            <span className="text-xs" style={{ color:"#94A3B8" }}>{t("Value","Valore")} </span>
+            <span className="text-xs font-semibold" style={{ color:"#CBD5E1" }}>{valueScore}/35</span>
+          </div>
+        </div>
+
+        {/* Action row */}
+        <div className="flex items-center justify-between gap-2">
           <button
             onClick={() => setDrawerOpen(true)}
-            className="flex-shrink-0 text-xs font-semibold px-3 py-1 rounded-full"
-            style={{ backgroundColor: "rgba(14,165,233,0.15)", color: "#38BDF8", border: "1px solid rgba(14,165,233,0.3)" }}>
-            {t("How?", "Come?")} →
+            className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full"
+            style={{ backgroundColor:"rgba(14,165,233,0.15)", color:"#38BDF8", border:"1px solid rgba(14,165,233,0.3)" }}>
+            {t("How? ⓘ", "Come? ⓘ")}
           </button>
+          <div className="flex-shrink-0" />
+        </div>
+
+        {/* Ask AI Analysis */}
+        <div className="mt-2.5 pt-2.5" style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+          {!analysis && (
+            <button
+              onClick={handleAskAI}
+              disabled={analyzing || usedToday}
+              className="w-full py-2 rounded-xl text-xs font-semibold transition-opacity active:opacity-70"
+              style={{
+                backgroundColor: usedToday ? "rgba(255,255,255,0.04)" : "rgba(252,211,77,0.12)",
+                color:           usedToday ? "#475569" : "#FCD34D",
+                border:          `1px solid ${usedToday ? "rgba(255,255,255,0.08)" : "rgba(252,211,77,0.25)"}`,
+                opacity:         analyzing ? 0.7 : 1,
+              }}>
+              {analyzing
+                ? t("🤖 Analysing…", "🤖 Analisi…")
+                : usedToday
+                ? t("✓ AI ask used today · resets midnight", "✓ AI usata oggi · si resetta a mezzanotte")
+                : t("🤖 Ask AI Analysis", "🤖 Chiedi all'AI")}
+            </button>
+          )}
+          {analysisErr && (
+            <p className="text-xs mt-1" style={{ color: "#F87171" }}>{analysisErr}</p>
+          )}
+          {analysis && (
+            <div className="rounded-xl p-3"
+              style={{ backgroundColor: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.18)" }}>
+              <p className="text-xs font-semibold mb-1.5" style={{ color: "#FCD34D" }}>
+                🤖 {t("AI Analysis", "Analisi AI")}
+              </p>
+              <p className="text-xs leading-relaxed" style={{ color: "#CBD5E1" }}>{analysis}</p>
+              <p className="text-xs mt-2" style={{ color: "#334155" }}>
+                {t("Educational only — not financial advice.", "Solo educativo — non è consulenza finanziaria.")}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -626,16 +752,16 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
           </p>
         </div>
         <FactorRow
-          label={t("Trend ↗", "Trend ↗")}
-          score={stock.factors.trend} max={40}
+          label={t("3M Momentum 🚀", "Momentum 3M 🚀")}
+          score={stock.factors.momentum} max={30}
           description={t(
-            `Price is ${stock.meta.ma200Diff >= 0 ? "+" : ""}${stock.meta.ma200Diff.toFixed(1)}% vs its 200-day moving average. Being above the long-term trend line means the stock is in an uptrend.`,
-            `Il prezzo è ${stock.meta.ma200Diff >= 0 ? "+" : ""}${stock.meta.ma200Diff.toFixed(1)}% rispetto alla media a 200 giorni. Sopra il trend di lungo periodo è un segnale positivo.`
+            `${stock.meta.mom3m >= 0 ? "+" : ""}${stock.meta.mom3m.toFixed(1)}% return over the last 3 months. Positive momentum means the stock has been trending in the right direction recently.`,
+            `${stock.meta.mom3m >= 0 ? "+" : ""}${stock.meta.mom3m.toFixed(1)}% di rendimento negli ultimi 3 mesi. Momentum positivo indica una tendenza al rialzo recente.`
           )}
         />
         <FactorRow
           label={t("Fair Value ⚖️", "Valore Equo ⚖️")}
-          score={stock.factors.value} max={35}
+          score={stock.factors.value} max={30}
           description={(() => {
             const pe           = stock.meta?.pe ?? null;
             const fairPE       = stock.meta?.fairPE ?? 18;
@@ -666,11 +792,19 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
           })()}
         />
         <FactorRow
-          label={t("Momentum 🚀", "Momentum 🚀")}
-          score={stock.factors.momentum} max={25}
+          label={t("52W Trend ↗", "Trend 52S ↗")}
+          score={stock.factors.trend} max={20}
           description={t(
-            `${stock.meta.mom3m >= 0 ? "+" : ""}${stock.meta.mom3m.toFixed(1)}% return over the last 3 months. Positive momentum means the stock has been moving in the right direction recently.`,
-            `${stock.meta.mom3m >= 0 ? "+" : ""}${stock.meta.mom3m.toFixed(1)}% di rendimento negli ultimi 3 mesi. Momentum positivo significa che il titolo si sta muovendo nella direzione giusta.`
+            `Price is ${stock.meta.ma200Diff >= 0 ? "+" : ""}${stock.meta.ma200Diff.toFixed(1)}% vs the midpoint of its 52-week range. Being in the upper half of the range signals a long-term uptrend.`,
+            `Il prezzo è ${stock.meta.ma200Diff >= 0 ? "+" : ""}${stock.meta.ma200Diff.toFixed(1)}% rispetto al punto medio del range a 52 settimane. Nella metà alta del range indica un trend rialzista.`
+          )}
+        />
+        <FactorRow
+          label={t("1M Momentum ⚡", "Momentum 1M ⚡")}
+          score={stock.factors.mom1m ?? 0} max={20}
+          description={t(
+            `Short-term confirmation signal. Positive 1-month return supports the current direction.`,
+            `Segnale di conferma a breve termine. Un rendimento positivo a 1 mese supporta la direzione attuale.`
           )}
         />
       </ScoreDrawer>
@@ -679,25 +813,43 @@ function MarketSignalCard({ stock, t }: { stock: MarketStockSignal; t: (en: stri
 }
 
 function AISuggestionsPanel({
-  marketSignals, marketLoading, t,
+  marketSignals, marketLoading, marketFetched, t, userId, appLang,
 }: {
   marketSignals: MarketSignalsResponse | null;
   marketLoading: boolean;
+  marketFetched: boolean;
+  userId:        string | null;
+  appLang:       "en" | "it";
   t:             (en: string, it: string) => string;
 }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("vela_market_collapsed") === "1";
+  });
+  function toggleMarket() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem("vela_market_collapsed", next ? "1" : "0"); } catch {}
+  }
   return (
     <div>
       {/* Header */}
       <div className="flex items-center gap-2 mb-3">
-        <h2 className="text-sm font-semibold text-white">
-          🌐 {t("Market Opportunities", "Opportunità di Mercato")}
-        </h2>
-        <span className="text-xs px-2 py-0.5 rounded-full"
-          style={{ backgroundColor: "rgba(14,165,233,0.15)", color: "#38BDF8" }}>
-          {t("S&P 500 · STOXX 600", "S&P 500 · STOXX 600")}
-        </span>
+        <button
+          onClick={toggleMarket}
+          className="flex items-center gap-2 select-none">
+          <h2 className="text-sm font-semibold text-white">
+            🌐 {t("Market Opportunities", "Opportunità di Mercato")}
+          </h2>
+          <span className="text-xs px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: "rgba(14,165,233,0.15)", color: "#38BDF8" }}>
+            {t("S&P 500 · STOXX 600", "S&P 500 · STOXX 600")}
+          </span>
+          <span style={{ color: "#475569", fontSize: "10px" }}>{collapsed ? "▼" : "▲"}</span>
+        </button>
       </div>
 
+      {!collapsed && <>
       {/* Loading skeleton */}
       {marketLoading && (
         <div className="space-y-2">
@@ -708,11 +860,22 @@ function AISuggestionsPanel({
         </div>
       )}
 
-      {/* No data yet */}
-      {!marketLoading && !marketSignals && (
-        <p className="text-xs text-center py-6" style={{ color: "#475569" }}>
+      {/* Loading (initial, before first fetch completes) */}
+      {!marketLoading && !marketFetched && !marketSignals && (
+        <p className="text-xs text-center py-6 animate-pulse" style={{ color: "#475569" }}>
           {t("Analysing 80 stocks…", "Analisi di 80 titoli…")}
         </p>
+      )}
+
+      {/* Error state (fetch completed but no data returned) */}
+      {!marketLoading && marketFetched && !marketSignals && (
+        <div className="rounded-2xl p-6 text-center"
+          style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.12)" }}>
+          <p className="text-sm mb-1 text-white">{t("Signals unavailable", "Segnali non disponibili")}</p>
+          <p className="text-xs" style={{ color: "#64748B" }}>
+            {t("Market signals couldn't load right now. Check back in a few minutes.", "I segnali di mercato non sono disponibili al momento. Riprova tra qualche minuto.")}
+          </p>
+        </div>
       )}
 
       {/* Results */}
@@ -729,7 +892,7 @@ function AISuggestionsPanel({
                 </p>
                 <div className="space-y-2">
                   {marketSignals.buys.map(s => (
-                    <MarketSignalCard key={s.ticker} stock={s} t={t} />
+                    <MarketSignalCard key={s.ticker} stock={s} t={t} userId={userId} appLang={appLang} />
                   ))}
                 </div>
               </div>
@@ -745,7 +908,7 @@ function AISuggestionsPanel({
                 </p>
                 <div className="space-y-2">
                   {marketSignals.sells.map(s => (
-                    <MarketSignalCard key={s.ticker} stock={s} t={t} />
+                    <MarketSignalCard key={s.ticker} stock={s} t={t} userId={userId} appLang={appLang} />
                   ))}
                 </div>
               </div>
@@ -758,11 +921,12 @@ function AISuggestionsPanel({
             )}
 
             <p className="text-xs text-center pt-1" style={{ color: "#334155" }}>
-              {t("Screened daily from 80 blue-chip stocks", "Screening giornaliero su 80 titoli blue-chip")}
+              {t("Screened daily from 80 blue-chip stocks · educational, not financial advice", "Screening giornaliero su 80 titoli blue-chip · educativo, non consulenza finanziaria")}
             </p>
           </div>
         );
       })()}
+      </>}
     </div>
   );
 }
@@ -853,10 +1017,15 @@ export default function Home() {
   const [signalsLoading,    setSignalsLoading]    = useState(false);
   const [marketSignals,  setMarketSignals]  = useState<MarketSignalsResponse | null>(null);
   const [marketLoading,  setMarketLoading]  = useState(false);
+  const [marketFetched,  setMarketFetched]  = useState(false);
   const [showOnboarding,    setShowOnboarding]    = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletingAccount,   setDeletingAccount]   = useState(false);
   const [showAdd,        setShowAdd]        = useState(false);
+  const [holdingsCollapsed, setHoldingsCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("vela_holdings_collapsed") === "1";
+  });
   const [voicePrefill,   setVoicePrefill]   = useState<ParsedHolding | null>(null);
   const [deleteTarget,   setDeleteTarget]   = useState<Holding | null>(null);
   const [userId,         setUserId]         = useState<string | null>(null);
@@ -973,13 +1142,14 @@ export default function Home() {
   // ── Fetch market-wide signals (S&P 500 + STOXX 600, 12h localStorage cache)
   const fetchMarketSignals = useCallback(async () => {
     const heldStr  = holdings.map(h => h.ticker.toUpperCase()).sort().join(",");
-    const cacheKey = `vela_market_v10_${appLang}_${heldStr}`;
+    const cacheKey = `vela_market_v11_${appLang}_${heldStr}`;
     try {
       const cached = localStorage.getItem(cacheKey);
       if (cached) {
         const { data, ts } = JSON.parse(cached);
         if (Date.now() - ts < 24 * 60 * 60 * 1000) {
           setMarketSignals(data as MarketSignalsResponse);
+          setMarketFetched(true);
           return;
         }
       }
@@ -996,6 +1166,7 @@ export default function Home() {
       }
     } catch {}
     setMarketLoading(false);
+    setMarketFetched(true);
   }, [appLang, holdings]);
 
   // ── Fetch community analyses ─────────────────────────────────────────────
@@ -1202,7 +1373,7 @@ export default function Home() {
   useEffect(() => {
     try {
       Object.keys(localStorage)
-        .filter(k => /^vela_signals_v([1-9]|10)_/.test(k) || /^vela_market_v[1-9]_/.test(k) || /^vela_val_v[1-7]_/.test(k) || /^vela_wl_signals_v[1-3]_/.test(k))
+        .filter(k => /^vela_signals_v([1-9]|10)_/.test(k) || /^vela_market_v(10|[1-9])_/.test(k) || /^vela_val_v[1-7]_/.test(k) || /^vela_wl_signals_v[1-3]_/.test(k))
         .forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);
@@ -1578,6 +1749,11 @@ export default function Home() {
                 </AreaChart>
               </ResponsiveContainer>
             )}
+            {chartData.length >= 7 && (
+              <p className="text-xs text-center mt-2" style={{ color: "#334155" }}>
+                {t("% change since period start · not absolute value", "% variazione dall'inizio del periodo · non valore assoluto")}
+              </p>
+            )}
           </div>
 
           {/* Sector concentration warning */}
@@ -1615,12 +1791,26 @@ export default function Home() {
           {/* Holdings */}
           <div>
             <div className="flex justify-between items-center mb-3">
-              <h2 className="text-sm font-semibold text-white">{t("My Holdings","I Miei Titoli")}</h2>
+              <button
+                onClick={() => { const next = !holdingsCollapsed; setHoldingsCollapsed(next); try { localStorage.setItem("vela_holdings_collapsed", next ? "1" : "0"); } catch {} }}
+                className="flex items-center gap-2 select-none">
+                <h2 className="text-sm font-semibold text-white">
+                  {t("My Holdings","I Miei Titoli")}
+                  {enriched.length > 0 && (
+                    <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full font-medium"
+                      style={{ backgroundColor: "rgba(255,255,255,0.10)", color: "#94A3B8" }}>
+                      {enriched.length}
+                    </span>
+                  )}
+                </h2>
+                <span style={{ color: "#475569", fontSize: "10px" }}>{holdingsCollapsed ? "▼" : "▲"}</span>
+              </button>
               <button onClick={() => setShowAdd(true)}
                 className="w-8 h-8 rounded-full flex items-center justify-center text-white text-lg font-bold transition-transform hover:scale-105 active:scale-95 shadow-lg"
                 style={{ background: "linear-gradient(135deg, #0EA5E9, #0284C7)" }}>+</button>
             </div>
 
+            <div style={{ display: holdingsCollapsed ? "none" : undefined }}>
             {loadingDB ? (
               <div className="space-y-2">
                 {[0, 1, 2].map(i => (
@@ -1766,13 +1956,25 @@ export default function Home() {
                 })}
               </div>
             )}
+            </div>
           </div>
+
+          {/* Recurring Investment Plans (PAC / DCA) */}
+          <PacSection
+            userId={userId}
+            t={t}
+            appLang={appLang}
+            onPurchaseLogged={loadHoldings}
+          />
 
           {/* AI Market Opportunities — S&P 500 + STOXX 600 */}
           <AISuggestionsPanel
             marketSignals={marketSignals}
             marketLoading={marketLoading}
+            marketFetched={marketFetched}
             t={t}
+            userId={userId}
+            appLang={appLang}
           />
         </div>
       )}
@@ -1894,17 +2096,52 @@ export default function Home() {
         <div className="px-4 py-4 space-y-4">
 
           {/* Section header */}
-          <div>
-            <h2 className="text-sm font-semibold mb-0.5 text-white">
-              {t("Is it worth buying? — AI answers", "Vale la pena comprare? — risponde l'AI")}
-            </h2>
-            <p className="text-xs" style={{ color: "#64748B" }}>
-              {t(
-                "We run 4 financial models on your stocks and give you a simple verdict: Undervalued, Fair, or Overvalued.",
-                "Eseguiamo 4 modelli finanziari sui tuoi titoli e ti diamo un verdetto semplice: Sottovalutato, Giusto o Sopravvalutato."
-              )}
-            </p>
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="text-base font-bold mb-0.5 text-white">
+                {t("Market Pulse 📡", "Market Pulse 📡")}
+              </h2>
+              <p className="text-xs" style={{ color: "#64748B" }}>
+                {t(
+                  "AI-powered signals for your portfolio & watchlist",
+                  "Segnali AI per il tuo portafoglio e watchlist"
+                )}
+              </p>
+            </div>
           </div>
+
+          {/* ── Top Picks Today strip ── */}
+          {marketSignals && marketSignals.buys.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-2" style={{ color: "#94A3B8" }}>
+                {t("Today's Top Picks →", "Top Pick di Oggi →")}
+              </p>
+              <div className="no-scrollbar" style={{ display:"flex", gap:"10px", overflowX:"auto", paddingBottom:"2px" }}>
+                {marketSignals.buys.slice(0, 3).map(s => {
+                  const flag = s.region === "US" ? "🇺🇸" : "🇪🇺";
+                  const ticker = s.ticker.replace(/\.(AS|DE|PA|L|SW|CO|MI)$/, "");
+                  return (
+                    <div key={s.ticker}
+                      style={{
+                        minWidth:"130px",
+                        borderRadius:"14px",
+                        backgroundColor:"rgba(34,197,94,0.07)",
+                        border:"1px solid rgba(34,197,94,0.20)",
+                        padding:"10px 12px",
+                        flexShrink:0,
+                      }}>
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"4px" }}>
+                        <span style={{ fontSize:"12px" }}>{flag}</span>
+                        <span style={{ fontSize:"10px", fontWeight:700, color:"#22C55E", backgroundColor:"rgba(34,197,94,0.15)", borderRadius:"9999px", padding:"1px 7px" }}>BUY</span>
+                      </div>
+                      <p style={{ color:"white", fontWeight:700, fontSize:"15px", margin:0, lineHeight:1.1 }}>{ticker}</p>
+                      <p style={{ color:"#4ADE80", fontSize:"11px", fontWeight:600, margin:"3px 0 0" }}>{s.score}/100</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Diversification panel — shows when 2+ holdings exist */}
           {enriched.length >= 2 && (
@@ -2150,6 +2387,7 @@ export default function Home() {
         <WatchlistTab
           t={t}
           appLang={appLang}
+          userId={userId}
           onAddToPortfolio={({ ticker, name }) => {
             setVoicePrefill({ ticker, name, shares: "", cost: "", date: "" });
             setShowAdd(true);

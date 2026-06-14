@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPERatio } from "@/lib/marketData";
+import { TICKER_FAIR_PE } from "@/lib/peMaps";
+import { calcScore, fetchQuickQuote, SCORE_WEIGHTS } from "@/lib/scoring";
 
 // Cap function runtime well under Vercel's per-request limit so a slow
 // upstream (Groq or Yahoo) doesn't let the connection hang to the point where
@@ -7,80 +9,11 @@ import { getPERatio } from "@/lib/marketData";
 // holding (which triggers this fetch via the parent onSave).
 export const maxDuration = 30;
 
-// ── Score helpers — 3 factors, beginner-friendly labels, 100 pts total ────────
-// Trend (40 pts): Is it trending up? — 200-day moving average position proxy
-// Value (35 pts): Is it fairly priced? — P/E vs sector fair P/E
-// Momentum (25 pts): Has it been moving the right way? — 3-month return proxy
-
-// Value sub-score from live P/E vs sector fair P/E. When the P/E is estimated
-// (no live data), return neutral 17 so approximations don't penalize. When
-// the company is unprofitable (negative trailing earnings) return 5 — low but
-// not zero, since recovery is possible.
-function calcValueScore(pe: number | null, fairPE: number, peEstimated: boolean, unprofitable: boolean): number {
-  if (unprofitable) return 5;
-  if (pe === null || peEstimated || fairPE <= 0) return 17;
-  const ratio = pe / fairPE;
-  if (ratio < 0.7) return 35;
-  if (ratio < 0.9) return 28;
-  if (ratio < 1.1) return 21;
-  if (ratio < 1.4) return 14;
-  if (ratio < 1.8) return 7;
-  return 0;
-}
-
-function calcScore(
-  price: number,
-  high52: number | null,
-  low52: number | null,
-  pe: number | null,
-  fairPE: number,
-  peEstimated: boolean,
-  unprofitable: boolean,
-): {
-  total: number; signal: "BUY" | "HOLD" | "SELL";
-  trend: number; value: number; momentum: number;
-  pctDiff: number; mom3m: number;
-} | null {
-  if (!price || price <= 0 || !high52 || !low52 || high52 <= low52) return null;
-  const range    = high52 - low52;
-  const pos      = (price - low52) / range;
-  const midpoint = (high52 + low52) / 2;
-  const pctDiff  = parseFloat(((price - midpoint) / midpoint * 100).toFixed(2));
-  const trendScore = pos > 0.75 ? 40 : pos > 0.60 ? 32 : pos > 0.45 ? 24 : pos > 0.30 ? 10 : 0;
-  const valueScore = calcValueScore(pe, fairPE, peEstimated, unprofitable);
-  const recovery   = (price - low52) / low52 * 100;
-  const momScore   = recovery > 40 ? 25 : recovery > 20 ? 20 : recovery > 8 ? 15 : recovery > 2 ? 8 : 3;
-  const mom3m      = parseFloat((recovery / 4).toFixed(2));
-  const total      = trendScore + valueScore + momScore;
-  const signal: "BUY" | "HOLD" | "SELL" = total >= 65 ? "BUY" : total >= 35 ? "HOLD" : "SELL";
-  return { total, signal, trend: trendScore, value: valueScore, momentum: momScore, pctDiff, mom3m };
-}
-
-// ── Per-ticker data fetch (v8/chart range=2d, proven reliable from Vercel IPs) ──
+// ── Per-ticker data fetch — fast range=2d, no weekly attempt ─────────────────
+// This route is called immediately after a user adds a holding (time-sensitive).
+// Weekly bars would risk hitting the 30s function limit on slow Yahoo responses.
 async function fetchTickerData(ticker: string) {
-  for (const host of ["query2", "query1"]) {
-    try {
-      const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "application/json",
-        },
-        next: { revalidate: 60 },
-      } as RequestInit);
-      if (!res.ok) continue;
-      const json = await res.json();
-      const meta = json?.chart?.result?.[0]?.meta;
-      if (!meta) continue;
-      return {
-        price:    (meta.regularMarketPrice as number) ?? 0,
-        high52:   (meta.fiftyTwoWeekHigh   as number | undefined) ?? null,
-        low52:    (meta.fiftyTwoWeekLow    as number | undefined) ?? null,
-        currency: (meta.currency           as string) ?? "USD",
-      };
-    } catch { continue; }
-  }
-  return null;
+  return fetchQuickQuote(ticker);
 }
 
 // ── Analyst consensus ─────────────────────────────────────────────────────────
@@ -160,6 +93,29 @@ async function batchReason(
   finally { clearTimeout(timeout); }
 }
 
+// ── ETF metadata (TER + AUM from Yahoo Finance fundProfile) ──────────────────
+async function fetchETFMeta(ticker: string): Promise<{ ter: number | null; aum: number | null }> {
+  try {
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=fundProfile,summaryDetail&formatted=false`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+      },
+      next: { revalidate: 86400 },
+    } as RequestInit);
+    if (!res.ok) return { ter: null, aum: null };
+    const json = await res.json();
+    const fp  = json?.quoteSummary?.result?.[0]?.fundProfile ?? null;
+    const sd  = json?.quoteSummary?.result?.[0]?.summaryDetail ?? null;
+    const ter = fp?.feesExpensesInvestment?.annualReportExpenseRatio?.raw
+             ?? fp?.feesExpensesInvestment?.netExpRatio?.raw
+             ?? null;
+    const aum = sd?.totalAssets?.raw ?? null;
+    return { ter, aum };
+  } catch { return { ter: null, aum: null }; }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   // Top-level try/catch ensures the route always returns 200 with usable JSON
@@ -179,22 +135,24 @@ export async function GET(req: NextRequest) {
     // Missing Groq key is non-fatal — return scored signals without reasoning.
     const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim() ?? "";
 
-    // 1 — Fetch price + 52-week range + analyst consensus + P/E in parallel.
-    //    Price/range uses v8/chart 2d (same cache as /api/prices). P/E uses
-    //    the unified getPERatio fallback chain (v7/quote for EU, v10
-    //    quoteSummary for US, Alpha Vantage backup, hardcoded estimate last).
-    const [tickerData, analysts, peData] = await Promise.all([
+    // Identify known ETFs upfront (synchronous map lookup) so ETF meta
+    // fetches can run in parallel with the main data fetches below.
+    const isKnownEtf = (t: string) => (TICKER_FAIR_PE[t.split(".")[0].toUpperCase()] ?? -1) === 0;
+
+    // 1 — Fetch weekly price data (1M+3M momentum) + analyst consensus + P/E + ETF meta in parallel
+    const [tickerData, analysts, peData, etfMeta] = await Promise.all([
       Promise.all(tickers.map(t => fetchTickerData(t))),
       Promise.all(tickers.map(t => fetchAnalyst(t))),
       Promise.all(tickers.map(t => getPERatio(t))),
+      Promise.all(tickers.map(t => isKnownEtf(t) ? fetchETFMeta(t) : Promise.resolve({ ter: null, aum: null }))),
     ]);
 
-    // 2 — Score using 52-week range + live P/E for Value sub-score
+    // 2 — Score using formula v2 (3M momentum + P/E + 52W trend + 1M momentum)
     const computed = tickers.map((ticker, i) => {
       const td     = tickerData[i];
       const peMeta = peData[i];
       const result = td
-        ? calcScore(td.price, td.high52, td.low52, peMeta.pe, peMeta.fairPE, peMeta.peEstimated, peMeta.unprofitable)
+        ? calcScore(td.price, td.high52, td.low52, td.mom1m, td.mom3m, peMeta.pe, peMeta.fairPE, peMeta.peEstimated, peMeta.unprofitable)
         : null;
       return {
         ticker,
@@ -233,11 +191,7 @@ export async function GET(req: NextRequest) {
           ticker,
           score:   c.result?.total  ?? null,
           signal:  c.result?.signal ?? "HOLD",
-          factors: c.result ? {
-            trend:    c.result.trend,
-            value:    c.result.value,
-            momentum: c.result.momentum,
-          } : null,
+          factors: c.result ? c.result.factors : null,
           meta: c.result ? {
             ma200Diff:    c.result.pctDiff,
             mom3m:        c.result.mom3m,
@@ -246,6 +200,8 @@ export async function GET(req: NextRequest) {
             sector:       c.sector,
             peEstimated:  c.peEstimated,
             unprofitable: c.unprofitable,
+            ter:          etfMeta[i].ter,
+            aum:          etfMeta[i].aum,
           } : null,
           analyst:   analysts[i] ?? null,
           reasoning: reasonings[ticker] ?? null,

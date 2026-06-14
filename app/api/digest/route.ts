@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 interface HoldingInfo {
   ticker: string;
@@ -25,12 +26,15 @@ async function tryGroq(prompt: string): Promise<{ digest: string } | null> {
   const GROQ_KEY = process.env.GROQ_API_KEY?.replace(/^﻿/, "").trim();
   if (!GROQ_KEY) return null;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${GROQ_KEY}`,
     },
+    signal: controller.signal,
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
       max_tokens: 300,
@@ -38,6 +42,7 @@ async function tryGroq(prompt: string): Promise<{ digest: string } | null> {
       messages: [{ role: "user", content: prompt }],
     }),
   });
+  clearTimeout(timer);
 
   if (!groqRes.ok) throw new Error(`Groq ${groqRes.status}`);
 
@@ -50,17 +55,21 @@ async function tryGemini(prompt: string): Promise<{ digest: string } | null> {
   const GEMINI_KEY = process.env.GOOGLE_AI_API_KEY?.replace(/^﻿/, "").trim();
   if (!GEMINI_KEY) return null;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   const geminiRes = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { maxOutputTokens: 300, temperature: 0.7 },
       }),
     }
   );
+  clearTimeout(timer);
 
   if (!geminiRes.ok) throw new Error(`Gemini ${geminiRes.status}`);
 

@@ -171,15 +171,53 @@ interface Props {
   t: (en: string, it: string) => string;
   appLang: Lang;
   onAddToPortfolio: (prefill: { ticker: string; name: string }) => void;
+  userId: string | null;
 }
 
-export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
+interface AiState { analysis: string | null; loading: boolean; error: string; }
+
+export default function WatchlistTab({ t, appLang, onAddToPortfolio, userId }: Props) {
   const [items,          setItems]          = useState<WatchlistItem[]>([]);
   const [prices,         setPrices]         = useState<Record<string, { price: number; changePct: number; currency: string }>>({});
   const [signals,        setSignals]        = useState<Record<string, TickerSignal>>({});
   const [signalsLoading, setSignalsLoading] = useState(false);
   const [expandedIds,    setExpandedIds]    = useState<Set<string>>(new Set());
   const [showAddModal,   setShowAddModal]   = useState(false);
+  const [aiStates,       setAiStates]       = useState<Record<string, AiState>>({});
+  const [usedToday,      setUsedToday]      = useState(() => {
+    if (typeof window === "undefined") return false;
+    const saved = localStorage.getItem("vela_ai_asks_date");
+    const today = new Date().toISOString().split("T")[0];
+    if (saved !== today) return false;
+    return parseInt(localStorage.getItem("vela_ai_asks_count") ?? "0", 10) >= 1;
+  });
+
+  function getAiState(ticker: string): AiState {
+    return aiStates[ticker] ?? { analysis: null, loading: false, error: "" };
+  }
+
+  async function handleAskAI(ticker: string, score: number | null, signal: string) {
+    if (usedToday || !userId || getAiState(ticker).loading) return;
+    setAiStates(prev => ({ ...prev, [ticker]: { analysis: null, loading: true, error: "" } }));
+    try {
+      const res  = await fetch(`/api/signal-analysis?ticker=${ticker}&score=${score ?? 0}&signal=${signal}&lang=${appLang}`);
+      const data = await res.json();
+      if (res.status === 429 || data.limited) {
+        setUsedToday(true);
+        setAiStates(prev => ({ ...prev, [ticker]: { analysis: null, loading: false, error: t("Daily limit reached. Resets at midnight UTC.", "Limite giornaliero raggiunto. Si resetta a mezzanotte UTC.") } }));
+      } else if (data.analysis) {
+        setAiStates(prev => ({ ...prev, [ticker]: { analysis: data.analysis, loading: false, error: "" } }));
+        const today = new Date().toISOString().split("T")[0];
+        localStorage.setItem("vela_ai_asks_date", today);
+        localStorage.setItem("vela_ai_asks_count", "1");
+        setUsedToday(true);
+      } else {
+        setAiStates(prev => ({ ...prev, [ticker]: { analysis: null, loading: false, error: t("Analysis unavailable. Try again.", "Analisi non disponibile. Riprova.") } }));
+      }
+    } catch {
+      setAiStates(prev => ({ ...prev, [ticker]: { analysis: null, loading: false, error: t("Analysis unavailable. Try again.", "Analisi non disponibile. Riprova.") } }));
+    }
+  }
 
   // Load persisted items on mount
   useEffect(() => { setItems(loadItems()); }, []);
@@ -324,11 +362,27 @@ export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
               </p>
             );
           } else if (pe === null || pe === undefined) {
-            peNode = (
-              <p className="text-xs" style={{ color: "#64748B" }}>
-                {t("No P/E data (ETF / index)", "P/E non disponibile (ETF / indice)")}
-              </p>
-            );
+            const { ter, aum } = sig.meta as { ter?: number | null; aum?: number | null };
+            if (ter !== null && ter !== undefined) {
+              const aumStr = aum
+                ? aum >= 1e9
+                  ? ` · AUM $${(aum / 1e9).toFixed(1)}B`
+                  : ` · AUM $${(aum / 1e6).toFixed(0)}M`
+                : "";
+              peNode = (
+                <p className="text-xs">
+                  <span style={{ color: "#94A3B8" }}>TER </span>
+                  <span className="text-white font-semibold">{(ter * 100).toFixed(2)}%/yr</span>
+                  {aumStr && <span style={{ color: "#64748B" }}>{aumStr}</span>}
+                </p>
+              );
+            } else {
+              peNode = (
+                <p className="text-xs" style={{ color: "#64748B" }}>
+                  {t("No P/E data (ETF / index)", "P/E non disponibile (ETF / indice)")}
+                </p>
+              );
+            }
           } else {
             const ratio    = pe / fairPE;
             const peColor  = ratio < 0.85 ? "#4ADE80" : ratio > 1.15 ? "#F87171" : "#FCD34D";
@@ -430,7 +484,9 @@ export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
                     {t("Analysing…", "Analisi…")}
                   </p>
                 )}
-                {sig && (
+                {sig && (() => {
+                  const ai = getAiState(item.ticker);
+                  return (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold px-2.5 py-0.5 rounded-full"
@@ -457,8 +513,44 @@ export default function WatchlistTab({ t, appLang, onAddToPortfolio }: Props) {
                         &ldquo;{sig.reasoning}&rdquo;
                       </p>
                     )}
+
+                    {/* Ask AI Analysis */}
+                    <div className="pt-1">
+                      {!ai.analysis && (
+                        <button
+                          onClick={() => handleAskAI(item.ticker, sig.score, sig.signal)}
+                          disabled={ai.loading || usedToday}
+                          className="w-full py-2 rounded-xl text-xs font-semibold transition-opacity active:opacity-70"
+                          style={{
+                            backgroundColor: usedToday ? "rgba(255,255,255,0.04)" : "rgba(252,211,77,0.12)",
+                            color:           usedToday ? "#475569" : "#FCD34D",
+                            border:          `1px solid ${usedToday ? "rgba(255,255,255,0.08)" : "rgba(252,211,77,0.25)"}`,
+                            opacity: ai.loading ? 0.7 : 1,
+                          }}>
+                          {ai.loading
+                            ? t("🤖 Analysing…", "🤖 Analisi…")
+                            : usedToday
+                            ? t("✓ AI ask used today · resets midnight", "✓ AI usata oggi · si resetta a mezzanotte")
+                            : t("🤖 Ask AI Analysis", "🤖 Chiedi all'AI")}
+                        </button>
+                      )}
+                      {ai.error && <p className="text-xs mt-1" style={{ color: "#F87171" }}>{ai.error}</p>}
+                      {ai.analysis && (
+                        <div className="rounded-xl p-3"
+                          style={{ backgroundColor: "rgba(252,211,77,0.06)", border: "1px solid rgba(252,211,77,0.18)" }}>
+                          <p className="text-xs font-semibold mb-1.5" style={{ color: "#FCD34D" }}>
+                            🤖 {t("AI Analysis", "Analisi AI")}
+                          </p>
+                          <p className="text-xs leading-relaxed" style={{ color: "#CBD5E1" }}>{ai.analysis}</p>
+                          <p className="text-xs mt-2" style={{ color: "#334155" }}>
+                            {t("Educational only — not financial advice.", "Solo educativo — non è consulenza finanziaria.")}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Notes */}
                 {item.notes && (

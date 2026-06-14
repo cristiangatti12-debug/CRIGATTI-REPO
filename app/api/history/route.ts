@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 30;
+
 const INDEXES: Record<string, string> = {
   "S&P 500":   "^GSPC",
   "NASDAQ":    "^IXIC",
@@ -24,16 +26,28 @@ interface HoldingParam { ticker: string; shares: number; }
 
 // Fetch OHLCV from Yahoo Finance
 async function fetchHistory(ticker: string, range: string, interval: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}`;
-  const res  = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-  const json = await res.json();
-  const data = json?.chart?.result?.[0];
-  if (!data) return [];
-  const timestamps: number[]  = data.timestamp ?? [];
-  const closes: number[]      = data.indicators?.quote?.[0]?.close ?? [];
-  return timestamps
-    .map((t, i) => ({ t, c: closes[i] }))
-    .filter(x => x.c != null) as { t: number; c: number }[];
+  for (const host of ["query2", "query1"]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}`;
+      const res  = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+        signal: controller.signal,
+      } as RequestInit);
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const json = await res.json();
+      const data = json?.chart?.result?.[0];
+      if (!data) continue;
+      const timestamps: number[] = data.timestamp ?? [];
+      const closes: number[]     = data.indicators?.quote?.[0]?.close ?? [];
+      return timestamps
+        .map((t, i) => ({ t, c: closes[i] }))
+        .filter(x => x.c != null) as { t: number; c: number }[];
+    } catch { clearTimeout(timer); continue; }
+  }
+  return [];
 }
 
 function toLabel(ts: number) {
