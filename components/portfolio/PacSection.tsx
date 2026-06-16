@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import type { AccumulationPlan, PacInterval, TickerResult } from "@/types";
+import PacSimulationModal from "@/components/modals/PacSimulationModal";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(n: number, d = 2) {
@@ -390,6 +391,7 @@ export default function PacSection({ userId, t, appLang, onPurchaseLogged }: Pro
   });
   const [showAdd,     setShowAdd]     = useState(false);
   const [logTarget,   setLogTarget]   = useState<AccumulationPlan | null>(null);
+  const [simTarget,   setSimTarget]   = useState<AccumulationPlan | null>(null);
   const [deleteId,    setDeleteId]    = useState<string | null>(null);
 
   const fetchPlans = useCallback(async () => {
@@ -574,6 +576,16 @@ export default function PacSection({ userId, t, appLang, onPurchaseLogged }: Pro
                     </button>
                   )}
                   <button
+                    onClick={() => setSimTarget(plan)}
+                    className={`${isPaused ? "flex-1" : "px-3"} py-2 rounded-xl text-xs font-medium transition-opacity active:opacity-70`}
+                    style={{
+                      backgroundColor: "rgba(99,102,241,0.15)",
+                      color: "#A5B4FC",
+                      border: "1px solid rgba(99,102,241,0.30)",
+                    }}>
+                    📊 {t("Simulate", "Simula")}
+                  </button>
+                  <button
                     onClick={() => toggleStatus(plan)}
                     className="px-4 py-2 rounded-xl text-xs font-medium transition-opacity active:opacity-70"
                     style={{
@@ -605,6 +617,14 @@ export default function PacSection({ userId, t, appLang, onPurchaseLogged }: Pro
           onClose={() => setLogTarget(null)}
           onLogged={() => { fetchPlans(); onPurchaseLogged(); }}
           t={t}
+        />
+      )}
+      {simTarget && (
+        <PacSimulationModal
+          plan={simTarget}
+          onClose={() => setSimTarget(null)}
+          t={t}
+          appLang={appLang}
         />
       )}
     </div>
