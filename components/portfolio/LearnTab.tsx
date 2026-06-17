@@ -210,7 +210,6 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el || el.clientHeight === 0) return;
-    if (expandedRef.current !== null) return; // card is open — ignore all outer scroll events
     const newIdx = Math.round(el.scrollTop / el.clientHeight);
     setCurrentIdx(newIdx);
   }, []);
@@ -1680,6 +1679,16 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
     if (idx >= 0) scrollToLesson(idx);
   }, [allLessons, scrollToLesson]);
 
+  // Navigate between lessons while keeping the expanded view open
+  const goToLesson = useCallback((newIdx: number) => {
+    if (newIdx < 0 || newIdx >= allLessons.length) return;
+    setExpanded(null);
+    scrollToLesson(newIdx);
+    const nextId = allLessons[newIdx].id;
+    // Re-open the next lesson once the smooth scroll has settled
+    setTimeout(() => setExpanded(nextId), 320);
+  }, [allLessons, scrollToLesson, setExpanded]);
+
   // Which category is currently active
   const activeCat = allLessons[currentIdx]?.catId ?? CATEGORIES[0].id;
 
@@ -1729,7 +1738,7 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
         style={{
           height:"100dvh",
           overflowY:"scroll",
-          scrollSnapType:"y mandatory",
+          scrollSnapType: expandedLessonId === null ? "y mandatory" : "none",
           WebkitOverflowScrolling:"touch",
         }}
       >
@@ -1742,13 +1751,12 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
               style={{
                 height:"100dvh",
                 scrollSnapAlign:"start",
-                scrollSnapStop:"always",
                 flexShrink:0,
-                overflowY:"auto",
                 padding:"12px 16px 16px",
                 display:"flex",
                 flexDirection:"column",
                 gap:"10px",
+                overflow:"hidden",
               }}
               className="no-scrollbar"
             >
@@ -1820,25 +1828,71 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
                   gap:"10px",
                 }}>
                   {/* Compact header row */}
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0, gap:"8px" }}>
                     <div style={{ display:"flex", alignItems:"center", gap:"8px" }}>
                       <span style={{ fontSize:"26px", lineHeight:1 }}>{lesson.icon}</span>
                       <DiffBadge level={lesson.level} t={t} />
                     </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setExpanded(null); }}
-                      style={{
-                        backgroundColor:"rgba(255,255,255,0.06)",
-                        border:"1px solid rgba(255,255,255,0.12)",
-                        color:"#94A3B8",
-                        borderRadius:"9999px",
-                        padding:"4px 14px",
-                        fontSize:"12px",
-                        cursor:"pointer",
-                      }}
-                    >
-                      ↑ {t("Less", "Meno")}
-                    </button>
+                    <div style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); goToLesson(idx - 1); }}
+                        disabled={idx === 0}
+                        aria-label={t("Previous lesson", "Lezione precedente")}
+                        title={t("Previous lesson", "Lezione precedente")}
+                        style={{
+                          backgroundColor:"rgba(255,255,255,0.06)",
+                          border:"1px solid rgba(255,255,255,0.12)",
+                          color: idx === 0 ? "#475569" : "#CBD5E1",
+                          borderRadius:"9999px",
+                          width:"30px",
+                          height:"30px",
+                          fontSize:"13px",
+                          cursor: idx === 0 ? "not-allowed" : "pointer",
+                          opacity: idx === 0 ? 0.5 : 1,
+                          display:"flex",
+                          alignItems:"center",
+                          justifyContent:"center",
+                        }}
+                      >
+                        ◀
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); goToLesson(idx + 1); }}
+                        disabled={idx === totalLessons - 1}
+                        aria-label={t("Next lesson", "Lezione successiva")}
+                        title={t("Next lesson", "Lezione successiva")}
+                        style={{
+                          backgroundColor:"rgba(255,255,255,0.06)",
+                          border:"1px solid rgba(255,255,255,0.12)",
+                          color: idx === totalLessons - 1 ? "#475569" : "#CBD5E1",
+                          borderRadius:"9999px",
+                          width:"30px",
+                          height:"30px",
+                          fontSize:"13px",
+                          cursor: idx === totalLessons - 1 ? "not-allowed" : "pointer",
+                          opacity: idx === totalLessons - 1 ? 0.5 : 1,
+                          display:"flex",
+                          alignItems:"center",
+                          justifyContent:"center",
+                        }}
+                      >
+                        ▶
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setExpanded(null); }}
+                        style={{
+                          backgroundColor:"rgba(255,255,255,0.06)",
+                          border:"1px solid rgba(255,255,255,0.12)",
+                          color:"#94A3B8",
+                          borderRadius:"9999px",
+                          padding:"4px 14px",
+                          fontSize:"12px",
+                          cursor:"pointer",
+                        }}
+                      >
+                        ↑ {t("Less", "Meno")}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Title */}

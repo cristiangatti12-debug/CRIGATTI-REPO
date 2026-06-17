@@ -376,19 +376,45 @@ function ScoreDrawer({
   );
 }
 
-function FactorRow({ label, score, max, description }: { label: string; score: number; max: number; description: string }) {
+function FactorRow({ label, score, max, description, helpText }: { label: string; score: number; max: number; description: string; helpText?: string }) {
+  const [showHelp, setShowHelp] = useState(false);
   const pct = score / max;
   const barColor = pct >= 0.75 ? "#4ADE80" : pct >= 0.50 ? "#FCD34D" : pct >= 0.25 ? "#94A3B8" : "#F87171";
   return (
     <div className="space-y-1.5 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-white">{label}</span>
+        <span className="flex items-center gap-1.5">
+          <span className="text-sm font-semibold text-white">{label}</span>
+          {helpText && (
+            <button
+              type="button"
+              onClick={() => setShowHelp(v => !v)}
+              aria-label="What does this metric mean?"
+              aria-expanded={showHelp}
+              className="w-4 h-4 rounded-full bg-white/10 text-[10px] font-bold text-[#94A3B8] hover:bg-white/20 hover:text-white transition-colors flex items-center justify-center leading-none"
+            >
+              ?
+            </button>
+          )}
+        </span>
         <span className="text-sm font-bold" style={{ color: barColor }}>{score}/{max}</span>
       </div>
       <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.08)" }}>
         <div className="h-1.5 rounded-full" style={{ width: `${pct * 100}%`, backgroundColor: barColor }} />
       </div>
       <p className="text-xs leading-relaxed" style={{ color: "#94A3B8" }}>{description}</p>
+      {showHelp && helpText && (
+        <div
+          className="rounded-lg px-3 py-2 mt-1 text-xs leading-relaxed"
+          style={{
+            backgroundColor: "rgba(0,212,255,0.06)",
+            border: "1px solid rgba(0,212,255,0.18)",
+            color: "#CBD5E1",
+          }}
+        >
+          {helpText}
+        </div>
+      )}
     </div>
   );
 }
@@ -759,6 +785,10 @@ function MarketSignalCard({ stock, t, userId, appLang }: {
             `${stock.meta.mom3m >= 0 ? "+" : ""}${stock.meta.mom3m.toFixed(1)}% return over the last 3 months. Positive momentum means the stock has been trending in the right direction recently.`,
             `${stock.meta.mom3m >= 0 ? "+" : ""}${stock.meta.mom3m.toFixed(1)}% di rendimento negli ultimi 3 mesi. Momentum positivo indica una tendenza al rialzo recente.`
           )}
+          helpText={t(
+            "Did the price go up or down over the last 3 months? Stocks that have been trending up often keep going for a while — that's called momentum. A higher score means a stronger recent trend.",
+            "Il prezzo è salito o sceso negli ultimi 3 mesi? I titoli in trend rialzista tendono spesso a continuare — è quello che si chiama momentum. Un punteggio più alto indica un trend recente più forte."
+          )}
         />
         <FactorRow
           label={t("Fair Value ⚖️", "Valore Equo ⚖️")}
@@ -791,6 +821,10 @@ function MarketSignalCard({ stock, t, userId, appLang }: {
               "Nessun dato PE disponibile (ETF o indice). Punteggio di valore equo neutro."
             );
           })()}
+          helpText={t(
+            "Is the stock cheap or expensive compared to its earnings? PE = price ÷ yearly profit per share. A low PE for the sector means you're paying less for each €1 of profit the company makes — usually a good sign.",
+            "Il titolo è caro o economico rispetto agli utili? PE = prezzo ÷ utile annuale per azione. Un PE basso per il settore significa che paghi meno per ogni €1 di profitto che l'azienda genera — di solito è un buon segnale."
+          )}
         />
         <FactorRow
           label={t("52W Trend ↗", "Trend 52S ↗")}
@@ -799,6 +833,10 @@ function MarketSignalCard({ stock, t, userId, appLang }: {
             `Price is ${stock.meta.ma200Diff >= 0 ? "+" : ""}${stock.meta.ma200Diff.toFixed(1)}% vs the midpoint of its 52-week range. Being in the upper half of the range signals a long-term uptrend.`,
             `Il prezzo è ${stock.meta.ma200Diff >= 0 ? "+" : ""}${stock.meta.ma200Diff.toFixed(1)}% rispetto al punto medio del range a 52 settimane. Nella metà alta del range indica un trend rialzista.`
           )}
+          helpText={t(
+            "Where is today's price compared to the highs and lows of the last full year? Top half = the stock is in an uptrend. Bottom half = it's in a downtrend or recovering. Quick way to read long-term direction.",
+            "Dove si trova il prezzo di oggi rispetto a massimi e minimi dell'ultimo anno? Metà alta = trend rialzista. Metà bassa = trend ribassista o in recupero. Un modo rapido per leggere la direzione di lungo periodo."
+          )}
         />
         <FactorRow
           label={t("1M Momentum ⚡", "Momentum 1M ⚡")}
@@ -806,6 +844,10 @@ function MarketSignalCard({ stock, t, userId, appLang }: {
           description={t(
             `Short-term confirmation signal. Positive 1-month return supports the current direction.`,
             `Segnale di conferma a breve termine. Un rendimento positivo a 1 mese supporta la direzione attuale.`
+          )}
+          helpText={t(
+            "A short-term check. If the 3-month trend is up AND the last month is also up, the move is fresh — not just a memory from earlier. It helps avoid buying stocks that already peaked.",
+            "Una verifica a breve termine. Se il trend a 3 mesi è positivo E anche l'ultimo mese lo è, il movimento è recente — non solo un ricordo passato. Aiuta a evitare titoli che hanno già raggiunto il picco."
           )}
         />
       </ScoreDrawer>
