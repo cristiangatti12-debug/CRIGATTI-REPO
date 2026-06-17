@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { supabase, type Holding } from "@/lib/supabase";
 import { type ParsedHolding } from "@/types";
 import OnboardingModal from "@/components/modals/OnboardingModal";
+import LumpSumSimulationModal from "@/components/modals/LumpSumSimulationModal";
 import ValuationCard   from "@/components/portfolio/ValuationCard";
 import RiskModal,           { loadRiskResult, type RiskResult } from "@/components/modals/RiskModal";
 import DiversificationPanel from "@/components/portfolio/DiversificationPanel";
@@ -1033,6 +1034,7 @@ export default function Home() {
   const [userEmail,      setUserEmail]      = useState<string>("");
   const [joinDate,       setJoinDate]       = useState<string>("");
   const [showRiskModal,  setShowRiskModal]  = useState(false);
+  const [showLumpSum,    setShowLumpSum]    = useState(false);
   const [riskResult,     setRiskResult]     = useState<RiskResult | null>(null);
   const [prevScores,     setPrevScores]     = useState<Record<string, number>>({});
   const [profileOpen,    setProfileOpen]    = useState(false);
@@ -1510,6 +1512,13 @@ export default function Home() {
           holdings={holdings}
         />
       )}
+      {showLumpSum && (
+        <LumpSumSimulationModal
+          onClose={() => setShowLumpSum(false)}
+          t={t}
+          appLang={appLang}
+        />
+      )}
       {showAnalysisWizard && (
         <AnalysisWizard
           onClose={() => setShowAnalysisWizard(false)}
@@ -1958,6 +1967,29 @@ export default function Home() {
             )}
             </div>
           </div>
+
+          {/* One-time investment simulator (lump sum) */}
+          <button
+            onClick={() => setShowLumpSum(true)}
+            className="w-full rounded-2xl px-4 py-3 mb-4 text-left transition-opacity active:opacity-70 flex items-center gap-3"
+            style={{
+              backgroundColor: "rgba(99,102,241,0.12)",
+              border: "1px solid rgba(99,102,241,0.30)",
+            }}>
+            <span className="text-xl" aria-hidden>💸</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-white">
+                {t("Simulate a one-time investment", "Simula un investimento singolo")}
+              </span>
+              <span className="block text-xs mt-0.5" style={{ color: "#A5B4FC" }}>
+                {t(
+                  "See what could happen if you invested a lump sum today.",
+                  "Vedi cosa potrebbe succedere se investi una somma oggi."
+                )}
+              </span>
+            </span>
+            <span className="text-base flex-shrink-0" style={{ color: "#A5B4FC" }}>→</span>
+          </button>
 
           {/* Recurring Investment Plans (PAC / DCA) */}
           <PacSection

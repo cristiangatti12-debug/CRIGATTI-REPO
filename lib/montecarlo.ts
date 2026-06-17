@@ -85,6 +85,7 @@ export function runMonteCarlo(opts: {
   sigmaMonthly:        number;
   monthlyContribution: number;
   horizonMonths:       number;
+  initialBalance?:     number;
   paths?:              number;
   seed?:               number;
 }): SimResult {
@@ -93,6 +94,7 @@ export function runMonteCarlo(opts: {
     sigmaMonthly,
     monthlyContribution,
     horizonMonths,
+    initialBalance = 0,
     paths = 500,
   } = opts;
 
@@ -104,7 +106,8 @@ export function runMonteCarlo(opts: {
   for (let m = 0; m < horizonMonths; m++) values.push(new Array(paths));
 
   for (let k = 0; k < paths; k++) {
-    let v = 0;
+    // Lump-sum lands on day 0 and is exposed to the first month's market move.
+    let v = initialBalance;
     for (let m = 0; m < horizonMonths; m++) {
       // Cash in at start of month, then market move applies to whole balance.
       v += monthlyContribution;
@@ -122,7 +125,7 @@ export function runMonteCarlo(opts: {
       p10:      percentile(sorted, 0.10),
       p50:      percentile(sorted, 0.50),
       p90:      percentile(sorted, 0.90),
-      invested: (m + 1) * monthlyContribution,
+      invested: initialBalance + (m + 1) * monthlyContribution,
     });
   }
 
