@@ -16,12 +16,15 @@ export interface SimPoint {
 }
 
 export interface SimResult {
-  series:        SimPoint[];
-  stats:         SimStats;
-  finalP10:      number;
-  finalP50:      number;
-  finalP90:      number;
-  totalInvested: number;
+  series:          SimPoint[];
+  stats:           SimStats;
+  finalP10:        number;
+  finalP50:        number;
+  finalP90:        number;
+  totalInvested:   number;
+  lossProbability: number;
+  lossCount:       number;
+  pathsCount:      number;
 }
 
 const SIGMA_FLOOR = 1e-4;
@@ -124,12 +127,38 @@ export function runMonteCarlo(opts: {
   }
 
   const last = series[series.length - 1];
+  const totalInvested = last?.invested ?? 0;
+
+  let lossCount = 0;
+  if (horizonMonths > 0) {
+    const finalMonth = values[horizonMonths - 1];
+    for (let k = 0; k < paths; k++) {
+      if (finalMonth[k] < totalInvested) lossCount++;
+    }
+  }
+  const lossProbability = paths > 0 ? lossCount / paths : 0;
+
   return {
     series,
-    stats:         { muMonthly, sigmaMonthly: sigma, nObs: 0 },
-    finalP10:      last?.p10 ?? 0,
-    finalP50:      last?.p50 ?? 0,
-    finalP90:      last?.p90 ?? 0,
-    totalInvested: last?.invested ?? 0,
+    stats:           { muMonthly, sigmaMonthly: sigma, nObs: 0 },
+    finalP10:        last?.p10 ?? 0,
+    finalP50:        last?.p50 ?? 0,
+    finalP90:        last?.p90 ?? 0,
+    totalInvested,
+    lossProbability,
+    lossCount,
+    pathsCount:      paths,
   };
+}
+
+// FNV-1a string hash → unsigned 32-bit int. Used to seed Monte Carlo from a
+// ticker so the same ticker always reproduces the same simulated paths.
+export function hashTicker(s: string): number {
+  let h = 2166136261;
+  const str = s.trim().toUpperCase();
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }

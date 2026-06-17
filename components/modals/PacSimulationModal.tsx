@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import type { AccumulationPlan } from "@/types";
-import { runMonteCarlo, type SimResult } from "@/lib/montecarlo";
+import { runMonteCarlo, hashTicker, type SimResult } from "@/lib/montecarlo";
 
 const CURR_SYM: Record<string, string> = { EUR: "€", USD: "$", GBP: "£" };
 
@@ -98,6 +98,7 @@ export default function PacSimulationModal({ plan, onClose, t, appLang }: Props)
         monthlyContribution: amt,
         horizonMonths:       years * 12,
         paths:               500,
+        seed:                hashTicker(plan.ticker),
       });
       setResult(sim);
     }, 250);
@@ -218,7 +219,14 @@ export default function PacSimulationModal({ plan, onClose, t, appLang }: Props)
 
         {!loading && result && (
           <>
-            <div className="rounded-2xl p-3 mb-4"
+            <p className="text-[11px] leading-relaxed mb-2" style={{ color: "#94A3B8" }}>
+              {t(
+                "This chart shows 500 possible futures for your plan, based on how this investment moved over the last 5 years.",
+                "Questo grafico mostra 500 futuri possibili per il tuo piano, basati su come questo investimento si è mosso negli ultimi 5 anni."
+              )}
+            </p>
+
+            <div className="rounded-2xl p-3 mb-3"
               style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
               <ResponsiveContainer width="100%" height={240}>
                 <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -237,22 +245,33 @@ export default function PacSimulationModal({ plan, onClose, t, appLang }: Props)
                   <Line dataKey="invested" stroke="#FCD34D" strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} name="invested" />
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
 
-              {/* Legend */}
-              <div className="flex items-center gap-4 mt-2 pl-2 text-[10px]" style={{ color: "#94A3B8" }}>
-                <span className="flex items-center gap-1.5">
-                  <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: "rgba(56,189,248,0.35)" }} />
-                  P10–P90
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span style={{ width: 12, height: 2, backgroundColor: "#0EA5E9" }} />
-                  {t("Median", "Mediana")}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span style={{ width: 12, height: 2, backgroundColor: "#FCD34D", borderTop: "1px dashed #FCD34D" }} />
-                  {t("Invested", "Investito")}
-                </span>
-              </div>
+            {/* Plain-language legend */}
+            <div className="space-y-2 mb-4">
+              <LegendRow
+                swatch={<span style={{ width: 14, height: 10, borderRadius: 2, backgroundColor: "rgba(56,189,248,0.35)" }} />}
+                title={t("Likely range", "Intervallo probabile")}
+                sub={t(
+                  "8 out of 10 simulated futures end up inside this blue band.",
+                  "8 scenari simulati su 10 finiscono dentro questa banda azzurra."
+                )} />
+              <LegendRow
+                swatch={<span style={{ width: 14, height: 2, backgroundColor: "#0EA5E9" }} />}
+                title={t("Typical outcome", "Scenario tipico")}
+                sub={t(
+                  "The middle scenario — half the simulations did better, half worse.",
+                  "Il caso di mezzo — metà delle simulazioni va meglio, metà peggio."
+                )} />
+              <LegendRow
+                swatch={<span style={{
+                  width: 14, height: 0, borderTop: "2px dashed #FCD34D",
+                }} />}
+                title={t("Money you put in", "Soldi versati")}
+                sub={t(
+                  "The total you contributed, before any market growth.",
+                  "Il totale che hai versato, prima di qualsiasi crescita del mercato."
+                )} />
             </div>
 
             {/* Result summary */}
@@ -287,17 +306,58 @@ export default function PacSimulationModal({ plan, onClose, t, appLang }: Props)
               />
             </div>
 
-            <p className="text-xs mb-4" style={{ color: "#94A3B8" }}>
+            <p className="text-xs mb-3" style={{ color: "#94A3B8" }}>
               {t("Total invested", "Totale investito")}:{" "}
               <span className="font-semibold text-white">{curr}{fmt(result.totalInvested)}</span>
             </p>
 
-            <p className="text-[11px] italic leading-relaxed mb-2" style={{ color: "#94A3B8" }}>
-              {t(
-                "Markets don't grow in a straight line. The shaded band shows the 10th–90th percentile range across 500 simulated scenarios calibrated on the last 5 years of monthly history.",
-                "I mercati non crescono in linea retta. La banda colorata mostra l'intervallo dal 10° al 90° percentile su 500 scenari simulati calibrati sugli ultimi 5 anni di storico mensile."
-              )}
-            </p>
+            {/* Loss probability */}
+            {(() => {
+              const pct = Math.round(result.lossProbability * 100);
+              const high = pct >= 25;
+              return (
+                <div className="rounded-2xl px-3 py-2.5 mb-3"
+                  style={{
+                    backgroundColor: high ? "rgba(252,211,77,0.10)" : "rgba(74,222,128,0.10)",
+                    border: `1px solid ${high ? "rgba(252,211,77,0.30)" : "rgba(74,222,128,0.25)"}`,
+                  }}>
+                  <p className="text-xs font-semibold" style={{ color: high ? "#FCD34D" : "#4ADE80" }}>
+                    📉 {t("Chance of ending with less than you put in", "Probabilità di finire con meno di quanto hai versato")}:{" "}
+                    <span className="text-sm">{pct}%</span>
+                  </p>
+                  <p className="text-[10px] mt-0.5" style={{ color: "#94A3B8" }}>
+                    {t(
+                      `${result.lossCount} out of ${result.pathsCount} simulated futures ended below your contributions.`,
+                      `${result.lossCount} scenari simulati su ${result.pathsCount} sono finiti sotto i tuoi versamenti.`
+                    )}
+                  </p>
+                </div>
+              );
+            })()}
+
+            {/* Why monthly beats lump sum */}
+            <div className="rounded-2xl p-3 mb-3"
+              style={{ backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <p className="text-xs font-semibold mb-1.5 text-white">
+                💡 {t(
+                  "Why a monthly plan beats investing everything at once",
+                  "Perché un piano mensile è meglio che investire tutto in una volta"
+                )}
+              </p>
+              <p className="text-[11px] leading-relaxed" style={{ color: "#94A3B8" }}>
+                {t(
+                  "Putting all your money in on day one means you're betting on a single price. If the market drops the next month, you've already bought everything at the high.",
+                  "Mettere tutti i tuoi soldi il primo giorno significa scommettere su un singolo prezzo. Se il mercato scende il mese dopo, hai già comprato tutto al massimo."
+                )}
+              </p>
+              <p className="text-[11px] leading-relaxed mt-2" style={{ color: "#94A3B8" }}>
+                {t(
+                  "With a monthly plan you keep buying through the dips, so you automatically pick up more shares when prices are low and fewer when they're high. Over time the journey gets smoother: you don't need to guess the right moment, and one bad month doesn't sink your whole investment.",
+                  "Con un piano mensile continui a comprare anche nei ribassi, quindi prendi automaticamente più quote quando i prezzi sono bassi e meno quando sono alti. Nel tempo il percorso diventa più stabile: non devi indovinare il momento giusto, e un mese brutto non affonda tutto il tuo investimento."
+                )}
+              </p>
+            </div>
+
             <p className="text-[10px]" style={{ color: "#64748B" }}>
               {t(
                 "Past performance is not a guarantee of future results.",
@@ -313,6 +373,24 @@ export default function PacSimulationModal({ plan, onClose, t, appLang }: Props)
             {t("Enter a monthly amount to run the simulation.", "Inserisci un importo mensile per avviare la simulazione.")}
           </p>
         )}
+      </div>
+    </div>
+  );
+}
+
+function LegendRow({
+  swatch, title, sub,
+}: {
+  swatch: React.ReactNode; title: string; sub: string;
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <div className="flex items-center justify-center" style={{ width: 16, minHeight: 16, paddingTop: 4 }}>
+        {swatch}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-semibold text-white">{title}</p>
+        <p className="text-[10px] leading-snug" style={{ color: "#94A3B8" }}>{sub}</p>
       </div>
     </div>
   );
