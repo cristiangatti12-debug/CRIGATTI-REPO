@@ -1232,10 +1232,11 @@ export default function Home() {
   }
 
   // ── Fetch news ────────────────────────────────────────────────────────────
-  const fetchDigest = useCallback(async (hs: Holding[]) => {
+  const fetchDigest = useCallback(async (hs: Holding[], qs: Record<string, { changePct?: number }>) => {
     try {
       const today = new Date().toLocaleDateString("en-CA");
-      const cacheKey = `vela_digest_${today}`;
+      // v2 cache key — invalidates the v1 entries that were cached with change_pct: 0
+      const cacheKey = `vela_digest_v2_${today}`;
 
       // Check localStorage
       const cached = localStorage.getItem(cacheKey);
@@ -1245,10 +1246,10 @@ export default function Home() {
         return;
       }
 
-      // Compute price changes (would need quotes data, using 0 as fallback)
+      // Pass real today's % change per holding so the LLM can reason about movers
       const holdingsWithChanges = hs.map(h => ({
         ...h,
-        change_pct: 0, // Would need real price data here
+        change_pct: qs[h.ticker]?.changePct ?? 0,
       }));
 
       const res = await fetch("/api/digest", {
@@ -1433,10 +1434,16 @@ export default function Home() {
   }, [activeTab, fetchCommunityAnalyses]);
 
   useEffect(() => {
-    if (activeTab === "Portfolio" && holdings.length > 0 && !loadingDB) {
-      fetchDigest(holdings);
+    if (
+      activeTab === "Portfolio" &&
+      holdings.length > 0 &&
+      !loadingDB &&
+      !loadingPrices &&
+      Object.keys(quotes).length > 0
+    ) {
+      fetchDigest(holdings, quotes);
     }
-  }, [activeTab, holdings, fetchDigest, loadingDB]);
+  }, [activeTab, holdings, fetchDigest, loadingDB, loadingPrices, quotes]);
 
   // ── Auto-refresh news every 5 minutes ────────────────────────────────────
   useEffect(() => {

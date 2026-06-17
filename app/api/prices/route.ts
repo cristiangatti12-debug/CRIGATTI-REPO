@@ -25,11 +25,22 @@ async function fetchQuote(symbol: string) {
       if (!meta) continue;
 
       const price = meta.regularMarketPrice ?? 0;
-      // Yahoo returns previous close under several possible field names
-      const prev  =
+
+      // Find the previous trading day's close.
+      // Yahoo's `chartPreviousClose` for range=2d is the close at the boundary of the
+      // chart window (~2-3 trading days ago) — NOT yesterday's close. The reliable
+      // source is the first daily bar in the close array.
+      const closes: (number | null)[] = result?.indicators?.quote?.[0]?.close ?? [];
+      // Find the most recent non-null close that is strictly before the current price bar.
+      // Bars are oldest→newest; the last non-null close is "today", the one before it is "yesterday".
+      const nonNull = closes.filter((c): c is number => typeof c === "number");
+      const prevFromBars = nonNull.length >= 2 ? nonNull[nonNull.length - 2] : null;
+
+      const prev =
+        prevFromBars ??
         meta.regularMarketPreviousClose ??
-        meta.chartPreviousClose         ??
         meta.previousClose              ??
+        meta.chartPreviousClose         ??
         price;
 
       return {
