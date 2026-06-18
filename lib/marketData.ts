@@ -525,3 +525,156 @@ export async function getPERatio(ticker: string): Promise<PERatioResult> {
 
   return { pe: null, fairPE, sector, source: "unavailable", peEstimated: false, unprofitable: false };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPANY SNAPSHOT — full fundamentals for AI prompts
+// Yahoo's v10/quoteSummary is universally 401 now, so financials must come
+// from FMP (primary, 250 calls/day free) or Alpha Vantage (fallback, 25/day).
+// 24h fetch cache so repeat questions for the same ticker don't burn quota.
+
+export interface CompanySnapshot {
+  ticker:            string;
+  name:              string | null;
+  sector:            string | null;
+  industry:          string | null;
+  description:       string | null;   // 1–2 sentence business description
+  marketCap:         number | null;   // absolute USD
+  revenueGrowthYoY:  number | null;   // 0.12 = 12% YoY
+  grossMargin:       number | null;   // 0.45 = 45%
+  operatingMargin:   number | null;
+  netMargin:         number | null;
+  returnOnEquity:    number | null;
+  pe:                number | null;
+  source:            "fmp" | "av" | null;
+}
+
+const SNAPSHOT_CACHE_SECONDS = 86_400;
+
+function emptySnapshot(ticker: string): CompanySnapshot {
+  return {
+    ticker, name: null, sector: null, industry: null, description: null,
+    marketCap: null, revenueGrowthYoY: null,
+    grossMargin: null, operatingMargin: null, netMargin: null,
+    returnOnEquity: null, pe: null, source: null,
+  };
+}
+
+// Truncate a long description down to its first 1–2 sentences (~280 chars).
+function trimDescription(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (!text) return null;
+  if (text.length <= 280) return text;
+  const slice = text.slice(0, 280);
+  const lastDot = slice.lastIndexOf(". ");
+  return (lastDot > 120 ? slice.slice(0, lastDot + 1) : slice).trim() + (text.length > 280 ? "…" : "");
+}
+
+function numOrNull(x: unknown): number | null {
+  const n = typeof x === "number" ? x : (typeof x === "string" ? parseFloat(x) : NaN);
+  return isFinite(n) ? n : null;
+}
+
+async function trySnapshotFromFMP(ticker: string): Promise<CompanySnapshot | null> {
+  const FMP_KEY = (process.env.FMP_API_KEY ?? "").trim();
+  if (!FMP_KEY) return null;
+
+  const tk = encodeURIComponent(ticker);
+  const profileUrl = `https://financialmodelingprep.com/stable/profile?symbol=${tk}&apikey=${FMP_KEY}`;
+  const ratiosUrl  = `https://financialmodelingprep.com/stable/ratios-ttm?symbol=${tk}&apikey=${FMP_KEY}`;
+  const growthUrl  = `https://financialmodelingprep.com/stable/income-statement-growth?symbol=${tk}&limit=1&apikey=${FMP_KEY}`;
+
+  const opts = { next: { revalidate: SNAPSHOT_CACHE_SECONDS } } as RequestInit;
+  const [profileRes, ratiosRes, growthRes] = await Promise.all([
+    fetch(profileUrl, opts).catch(() => null),
+    fetch(ratiosUrl,  opts).catch(() => null),
+    fetch(growthUrl,  opts).catch(() => null),
+  ]);
+
+  let profileBody: unknown = null;
+  let ratiosBody:  unknown = null;
+  let growthBody:  unknown = null;
+  try { if (profileRes && profileRes.ok) profileBody = await profileRes.json(); } catch {}
+  try { if (ratiosRes  && ratiosRes.ok)  ratiosBody  = await ratiosRes.json();  } catch {}
+  try { if (growthRes  && growthRes.ok)  growthBody  = await growthRes.json();  } catch {}
+
+  const p = Array.isArray(profileBody) && profileBody.length > 0 ? (profileBody as Array<Record<string, unknown>>)[0] : null;
+  const r = Array.isArray(ratiosBody)  && ratiosBody.length  > 0 ? (ratiosBody  as Array<Record<string, unknown>>)[0] : null;
+  const g = Array.isArray(growthBody)  && growthBody.length  > 0 ? (growthBody  as Array<Record<string, unknown>>)[0] : null;
+
+  // Need at least one of profile or ratios — otherwise nothing useful
+  if (!p && !r) return null;
+
+  return {
+    ticker,
+    name:            (p?.companyName as string | undefined) ?? null,
+    sector:          (p?.sector       as string | undefined) ?? null,
+    industry:        (p?.industry     as string | undefined) ?? null,
+    description:     trimDescription(p?.description),
+    marketCap:       numOrNull(p?.mktCap ?? p?.marketCap),
+    revenueGrowthYoY: numOrNull(g?.growthRevenue),
+    grossMargin:      numOrNull(r?.grossProfitMarginTTM      ?? r?.grossMarginTTM),
+    operatingMargin:  numOrNull(r?.operatingProfitMarginTTM  ?? r?.operatingMarginTTM),
+    netMargin:        numOrNull(r?.netProfitMarginTTM        ?? r?.netMarginTTM),
+    returnOnEquity:   numOrNull(r?.returnOnEquityTTM),
+    pe:               saneTrailingPE(numOrNull(r?.priceToEarningsRatioTTM ?? r?.peRatioTTM)),
+    source: "fmp",
+  };
+}
+
+async function trySnapshotFromAV(ticker: string): Promise<CompanySnapshot | null> {
+  const AV_KEY = (process.env.AV_API_KEY ?? "").trim();
+  if (!AV_KEY) return null;
+  try {
+    const url = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${encodeURIComponent(ticker)}&apikey=${AV_KEY}`;
+    const res = await fetch(url, { next: { revalidate: SNAPSHOT_CACHE_SECONDS } } as RequestInit);
+    if (!res.ok) return null;
+    const j: Record<string, unknown> = await res.json();
+    if (j?.Note || j?.Information) return null;     // rate-limited
+    if (!j?.Symbol || !j?.Name) return null;        // unknown ticker
+
+    return {
+      ticker,
+      name:            (j.Name as string) ?? null,
+      sector:          (j.Sector as string) ?? null,
+      industry:        (j.Industry as string) ?? null,
+      description:     trimDescription(j.Description),
+      marketCap:       numOrNull(j.MarketCapitalization),
+      revenueGrowthYoY: numOrNull(j.QuarterlyRevenueGrowthYOY),
+      grossMargin:      null,
+      operatingMargin:  numOrNull(j.OperatingMarginTTM),
+      netMargin:        numOrNull(j.ProfitMargin),
+      returnOnEquity:   numOrNull(j.ReturnOnEquityTTM),
+      pe:               saneTrailingPE(numOrNull(j.PERatio)),
+      source: "av",
+    };
+  } catch { return null; }
+}
+
+/** Public entry — FMP primary, Alpha Vantage fallback, empty snapshot if both fail. */
+export async function getCompanySnapshot(ticker: string): Promise<CompanySnapshot> {
+  const fmp = await trySnapshotFromFMP(ticker);
+  if (fmp && (fmp.name || fmp.grossMargin !== null || fmp.operatingMargin !== null)) return fmp;
+  const av  = await trySnapshotFromAV(ticker);
+  if (av) return av;
+  return emptySnapshot(ticker);
+}
+
+/** Recent news headlines from Yahoo's still-working search endpoint. */
+export async function fetchTickerHeadlines(ticker: string, n = 4): Promise<string[]> {
+  try {
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}&newsCount=${n}&enableFuzzyQuery=false`;
+    const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 1_800 } } as RequestInit);
+    if (!res.ok) return [];
+    const items = (await res.json())?.news ?? [];
+    return (items as Array<{ title?: string; providerPublishTime?: number }>)
+      .filter(it => it.title)
+      .slice(0, n)
+      .map(it => {
+        const age = it.providerPublishTime
+          ? Math.floor((Date.now() / 1000 - it.providerPublishTime) / 3600)
+          : null;
+        return age !== null ? `"${it.title}" (${age}h ago)` : `"${it.title}"`;
+      });
+  } catch { return []; }
+}

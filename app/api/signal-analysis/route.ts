@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { fetchWeeklyQuote } from "@/lib/scoring";
-import { getPERatio } from "@/lib/marketData";
+import { getPERatio, getCompanySnapshot, fetchTickerHeadlines } from "@/lib/marketData";
 
 export const maxDuration = 30;
 
@@ -15,55 +15,6 @@ function midnightUTC(): string {
   const d = new Date();
   d.setUTCHours(24, 0, 0, 0);
   return d.toISOString();
-}
-
-// ── Live financials from Yahoo Finance quoteSummary ───────────────────────────
-async function fetchFinancials(ticker: string) {
-  try {
-    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=financialData,defaultKeyStatistics,summaryDetail&formatted=false`;
-    const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 3600 } } as RequestInit);
-    if (!res.ok) return null;
-    const r   = (await res.json())?.quoteSummary?.result?.[0];
-    if (!r)   return null;
-
-    const fd = r.financialData ?? {};
-    const ks = r.defaultKeyStatistics ?? {};
-    const sd = r.summaryDetail ?? {};
-
-    return {
-      revenueGrowth:        fd.revenueGrowth?.raw        ?? null,   // e.g. 0.12 = 12% YoY
-      grossMargin:          fd.grossMargins?.raw          ?? null,
-      operatingMargin:      fd.operatingMargins?.raw      ?? null,
-      returnOnEquity:       fd.returnOnEquity?.raw        ?? null,
-      freeCashflow:         fd.freeCashflow?.raw          ?? null,   // absolute $
-      revenuePerShare:      fd.revenuePerShare?.raw       ?? null,
-      forwardPE:            ks.forwardPE?.raw             ?? null,
-      priceToBook:          ks.priceToBook?.raw           ?? null,
-      epsGrowth:            ks.earningsQuarterlyGrowth?.raw ?? null, // QoQ EPS growth
-      week52Change:         ks["52WeekChange"]?.raw       ?? null,   // 52W price return
-      analystTarget:        sd.targetMeanPrice?.raw       ?? null,
-      currentPrice:         fd.currentPrice?.raw          ?? null,
-    };
-  } catch { return null; }
-}
-
-// ── Recent news headlines from Yahoo Finance ──────────────────────────────────
-async function fetchRecentNews(ticker: string): Promise<string[]> {
-  try {
-    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}&newsCount=5&enableFuzzyQuery=false`;
-    const res = await fetch(url, { headers: YF_HEADERS, next: { revalidate: 1800 } } as RequestInit);
-    if (!res.ok) return [];
-    const items = (await res.json())?.news ?? [];
-    return (items as { title?: string; providerPublishTime?: number }[])
-      .filter(n => n.title)
-      .slice(0, 4)
-      .map(n => {
-        const age = n.providerPublishTime
-          ? Math.floor((Date.now() / 1000 - n.providerPublishTime) / 3600)
-          : null;
-        return age !== null ? `"${n.title}" (${age}h ago)` : `"${n.title}"`;
-      });
-  } catch { return []; }
 }
 
 // ── 5-year synthetic backtest + recent price returns ─────────────────────────
@@ -186,11 +137,11 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Fetch all data in parallel ────────────────────────────────────────────
-  const [quote, peMeta, financials, newsHeadlines, historicalBacktest, historyRes] = await Promise.all([
+  const [quote, peMeta, snapshot, newsHeadlines, historicalBacktest, historyRes] = await Promise.all([
     fetchWeeklyQuote(ticker),
     getPERatio(ticker),
-    fetchFinancials(ticker),
-    fetchRecentNews(ticker),
+    getCompanySnapshot(ticker),
+    fetchTickerHeadlines(ticker, 4),
     fetchHistoricalBacktest(ticker),
     supabase
       .from("signal_history")
@@ -230,24 +181,27 @@ export async function GET(req: NextRequest) {
     `3M momentum: ${fmt(quote?.mom3m ?? null, "%")} | 1M momentum: ${fmt(quote?.mom1m ?? null, "%")}\n` +
     `P/E: ${peMeta.pe !== null ? `${peMeta.pe.toFixed(1)}x` : "N/A"} (sector fair: ${peMeta.fairPE}x) | Sector: ${peMeta.sector || "Unknown"}`;
 
-  // ── Section 2: Live financials ────────────────────────────────────────────
-  let financialsBlock = "Financials: not available";
-  if (financials) {
-    const upside = financials.analystTarget && financials.currentPrice
-      ? ((financials.analystTarget - financials.currentPrice) / financials.currentPrice * 100).toFixed(1)
-      : null;
-    const lines = [
-      financials.revenueGrowth !== null && `Revenue growth YoY: ${(financials.revenueGrowth * 100).toFixed(1)}%`,
-      financials.grossMargin   !== null && `Gross margin: ${(financials.grossMargin * 100).toFixed(1)}%`,
-      financials.operatingMargin !== null && `Operating margin: ${(financials.operatingMargin * 100).toFixed(1)}%`,
-      financials.returnOnEquity  !== null && `Return on equity: ${(financials.returnOnEquity * 100).toFixed(1)}%`,
-      financials.epsGrowth       !== null && `EPS growth QoQ: ${(financials.epsGrowth * 100).toFixed(1)}%`,
-      financials.forwardPE       !== null && `Forward P/E: ${financials.forwardPE.toFixed(1)}x`,
-      financials.priceToBook     !== null && `Price/Book: ${financials.priceToBook.toFixed(2)}x`,
-      upside && `Analyst consensus target: $${financials.analystTarget!.toFixed(0)} (${upside}% upside)`,
-    ].filter(Boolean);
-    if (lines.length > 0) financialsBlock = "Financials:\n" + lines.join("\n");
-  }
+  // ── Section 2: Company snapshot + live financials (FMP / AV) ─────────────
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  const businessLines: string[] = [];
+  if (snapshot.name)        businessLines.push(`Company: ${snapshot.name}`);
+  if (snapshot.sector)      businessLines.push(`Sector: ${snapshot.sector}${snapshot.industry ? ` · ${snapshot.industry}` : ""}`);
+  if (snapshot.description) businessLines.push(`Business: ${snapshot.description}`);
+
+  const financialLines = [
+    snapshot.revenueGrowthYoY !== null && `Revenue growth (latest reported): ${pct(snapshot.revenueGrowthYoY)}`,
+    snapshot.grossMargin      !== null && `Gross margin: ${pct(snapshot.grossMargin)}`,
+    snapshot.operatingMargin  !== null && `Operating margin: ${pct(snapshot.operatingMargin)}`,
+    snapshot.netMargin        !== null && `Net margin: ${pct(snapshot.netMargin)}`,
+    snapshot.returnOnEquity   !== null && `Return on equity: ${pct(snapshot.returnOnEquity)}`,
+  ].filter(Boolean) as string[];
+
+  const blocks: string[] = [];
+  if (businessLines.length)  blocks.push(`Company snapshot:\n${businessLines.join("\n")}`);
+  if (financialLines.length) blocks.push(`Financials (TTM, source: ${snapshot.source ?? "n/a"}):\n${financialLines.join("\n")}`);
+  const financialsBlock = blocks.length > 0
+    ? blocks.join("\n\n")
+    : "Company snapshot: not available (FMP/AV quota exhausted or ticker unknown to providers)";
 
   // ── Section 3: Historical price returns + 5Y backtest ───────────────────
   const { ret1m, ret3m, ret6m, ret1y, backtest } = historicalBacktest;
@@ -291,11 +245,12 @@ export async function GET(req: NextRequest) {
     `You are a senior portfolio analyst combining quantitative signals with real-world fundamentals and news.\n` +
     (lang === "it" ? "Respond entirely in Italian.\n" : "") +
     `Write 200–250 words. Structure your response as:\n` +
-    `1) Signal assessment — does the score reflect current momentum and valuation?\n` +
-    `2) Fundamentals check — is the business healthy? reference revenue growth, margins, analyst target\n` +
-    `3) News context — is there anything in recent headlines that supports or contradicts the signal?\n` +
-    `4) Track record — cite the 5-year backtest results: did BUY signals historically deliver? Compare to current signal.\n` +
-    `Be direct. Quote specific numbers. No disclaimers or padding.`;
+    `1) What the business does — one sentence using the company snapshot.\n` +
+    `2) Signal assessment — does the score reflect current momentum and valuation?\n` +
+    `3) Fundamentals check — quote the actual TTM margins, revenue growth, and ROE from the financials block.\n` +
+    `4) News context — is there anything in recent headlines that supports or contradicts the signal?\n` +
+    `5) Track record — cite the 5-year backtest results: did BUY signals historically deliver? Compare to current signal.\n` +
+    `Be direct. Quote specific numbers from the data given. Do not claim a number is unavailable if it appears in the user message. No disclaimers or padding.`;
 
   const userPrompt = [signalBlock, financialsBlock, priceHistoryBlock, newsBlock, velaHistoryBlock].join("\n\n");
 
