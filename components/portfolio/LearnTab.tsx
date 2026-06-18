@@ -210,6 +210,10 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el || el.clientHeight === 0) return;
+    // When a card is expanded its wrapper grows beyond 100dvh, so the
+    // scrollTop/clientHeight rounding would compute a wrong index. Freeze
+    // the progress bar while reading an expanded card.
+    if (expandedRef.current !== null) return;
     const newIdx = Math.round(el.scrollTop / el.clientHeight);
     setCurrentIdx(newIdx);
   }, []);
@@ -1749,14 +1753,18 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
             <div
               key={lesson.id}
               style={{
-                height:"100dvh",
-                scrollSnapAlign:"start",
-                flexShrink:0,
-                padding:"12px 16px 16px",
-                display:"flex",
-                flexDirection:"column",
-                gap:"10px",
-                overflow:"hidden",
+                // Collapsed: fixed 100dvh so reels-style snap works.
+                // Expanded: grow to fit content so the OUTER container scrolls naturally
+                // (no nested overflow chain that can swallow wheel events on desktop).
+                height: isExpanded ? "auto" : "100dvh",
+                minHeight: isExpanded ? "100dvh" : undefined,
+                scrollSnapAlign: "start",
+                flexShrink: 0,
+                padding: "12px 16px 16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px",
+                overflow: isExpanded ? "visible" : "hidden",
               }}
               className="no-scrollbar"
             >
@@ -1813,7 +1821,7 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
                   </button>
                 </div>
               ) : (
-                /* ── EXPANDED: full content ── */
+                /* ── EXPANDED: full content (no nested scroll — outer container handles it) ── */
                 <div className="no-scrollbar"
                   style={{
                   flex:1,
@@ -1821,8 +1829,6 @@ export default function LearnTab({ enriched, signals, t, appLang }: Props) {
                   backgroundColor:"rgba(255,255,255,0.06)",
                   border:`1px solid ${lesson.catColor}30`,
                   padding:"18px",
-                  overflowY:"auto",
-                  overscrollBehaviorY:"contain",
                   display:"flex",
                   flexDirection:"column",
                   gap:"10px",
